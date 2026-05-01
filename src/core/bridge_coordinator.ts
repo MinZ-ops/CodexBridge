@@ -84,6 +84,7 @@ const AUTO_COMMAND_SKILL_PATH = path.resolve('docs/command-skills/auto.md');
 const ASSISTANT_RECORD_COMMAND_SKILL_PATH = path.resolve('docs/command-skills/assistant-record.md');
 const AGENT_COMMAND_SKILL_PATH = path.resolve('docs/command-skills/agent.md');
 const REVIEW_COMMAND_SKILL_PATH = path.resolve('docs/command-skills/review.md');
+const INSTRUCTIONS_COMMAND_SKILL_PATH = path.resolve('docs/command-skills/instructions.md');
 const MAX_CLARIFY_CANDIDATES = 6;
 const REVIEW_PROGRESS_HEARTBEAT_MS = 20_000;
 const REVIEW_PROGRESS_HEARTBEAT_MAX_RUNS = 1;
@@ -108,6 +109,16 @@ export const AGENT_COMMAND_SKILL_ACTIONS = new Set([
 
 export const REVIEW_COMMAND_SKILL_ACTIONS = new Set([
   'run_review',
+  'clarify',
+  'reject',
+  'local_only',
+] as const);
+
+export const INSTRUCTIONS_COMMAND_SKILL_ACTIONS = new Set([
+  'propose_patch',
+  'propose_replace',
+  'propose_clear',
+  'update_pending_draft',
   'clarify',
   'reject',
   'local_only',
@@ -261,6 +272,51 @@ type AutomationCommandSkillResult =
     action: 'show_job';
     confidence: number;
     target: AutomationOperationTarget;
+  }
+  | {
+    action: 'clarify';
+    confidence: number;
+    question: string;
+    candidates: Array<Record<string, unknown>>;
+  }
+  | {
+    action: 'reject' | 'local_only';
+    confidence: number;
+    reason: string | null;
+  };
+
+type InstructionsProposalKind = 'patch' | 'replace' | 'clear';
+
+type PendingInstructionsCapture = {
+  startedAt: number;
+};
+
+type PendingInstructionsOperation = {
+  kind: InstructionsProposalKind;
+  createdAt: number;
+  rawInput: string;
+  summary: string;
+  changes: string[];
+  proposedContent: string;
+  baseContent: string;
+  normalizedBy: 'codex' | 'local';
+};
+
+type InstructionsCommandSkillResult =
+  | {
+    action: 'propose_patch' | 'propose_replace' | 'propose_clear';
+    confidence: number;
+    summary: string;
+    changes: string[];
+    proposedContent: string;
+  }
+  | {
+    action: 'update_pending_draft';
+    confidence: number;
+    proposalKind: InstructionsProposalKind;
+    summary: string;
+    changes: string[];
+    proposedContent: string;
   }
   | {
     action: 'clarify';
@@ -671,7 +727,8 @@ export class BridgeCoordinator {
   mcpBrowserStates: Map<any, McpBrowserState>;
   pendingPluginAliasDraftsByScope: Map<string, PendingPluginAliasDraft>;
   localeOverridesByScope: Map<string, SupportedLocale>;
-  pendingInstructionsEditsByScope: Map<string, { startedAt: number }>;
+  pendingInstructionsCapturesByScope: Map<string, PendingInstructionsCapture>;
+  pendingInstructionsOperationsByScope: Map<string, PendingInstructionsOperation>;
   pendingAutomationDraftsByScope: Map<string, PendingAutomationOperation>;
   pendingAgentDraftsByScope: Map<string, PendingAgentOperation>;
   pendingAssistantUpdateDraftsByScope: Map<string, PendingAssistantRecordUpdateDraft>;
@@ -718,7 +775,8 @@ export class BridgeCoordinator {
     this.mcpBrowserStates = new Map();
     this.pendingPluginAliasDraftsByScope = new Map();
     this.localeOverridesByScope = new Map();
-    this.pendingInstructionsEditsByScope = new Map();
+    this.pendingInstructionsCapturesByScope = new Map();
+    this.pendingInstructionsOperationsByScope = new Map();
     this.pendingAutomationDraftsByScope = new Map();
     this.pendingAgentDraftsByScope = new Map();
     this.pendingAssistantUpdateDraftsByScope = new Map();
@@ -772,8 +830,8 @@ export class BridgeCoordinator {
   }
 
   async handleInboundEventWithLocale(event, options = {}) {
-    if (!parseSlashCommand(event.text) && this.hasPendingInstructionsEdit(event)) {
-      return this.handlePendingInstructionsEdit(event);
+    if (!parseSlashCommand(event.text) && this.hasPendingInstructionsCapture(event)) {
+      return this.handlePendingInstructionsCapture(event);
     }
     const command = parseSlashCommand(event.text);
     if (command) {
@@ -1390,18 +1448,30 @@ export class BridgeCoordinator {
     return lines;
   }
 
-  hasPendingInstructionsEdit(event): boolean {
-    return this.pendingInstructionsEditsByScope.has(buildInstructionsEditKey(event));
+  hasPendingInstructionsCapture(event): boolean {
+    return this.pendingInstructionsCapturesByScope.has(buildInstructionsEditKey(event));
   }
 
-  setPendingInstructionsEdit(event) {
-    this.pendingInstructionsEditsByScope.set(buildInstructionsEditKey(event), {
+  setPendingInstructionsCapture(event) {
+    this.pendingInstructionsCapturesByScope.set(buildInstructionsEditKey(event), {
       startedAt: this.now(),
     });
   }
 
-  clearPendingInstructionsEdit(event) {
-    this.pendingInstructionsEditsByScope.delete(buildInstructionsEditKey(event));
+  clearPendingInstructionsCapture(event) {
+    this.pendingInstructionsCapturesByScope.delete(buildInstructionsEditKey(event));
+  }
+
+  getPendingInstructionsOperation(scopeRef: PlatformScopeRef): PendingInstructionsOperation | null {
+    return this.pendingInstructionsOperationsByScope.get(buildInstructionsOperationKey(scopeRef)) ?? null;
+  }
+
+  setPendingInstructionsOperation(scopeRef: PlatformScopeRef, operation: PendingInstructionsOperation) {
+    this.pendingInstructionsOperationsByScope.set(buildInstructionsOperationKey(scopeRef), operation);
+  }
+
+  clearPendingInstructionsOperation(scopeRef: PlatformScopeRef) {
+    this.pendingInstructionsOperationsByScope.delete(buildInstructionsOperationKey(scopeRef));
   }
 
   getPendingAutomationDraft(scopeRef: PlatformScopeRef): PendingAutomationDraft | null {
@@ -1459,17 +1529,19 @@ export class BridgeCoordinator {
     this.pendingAssistantUpdateDraftsByScope.delete(buildAssistantUpdateDraftKey(scopeRef));
   }
 
-  async handlePendingInstructionsEdit(event) {
+  async handlePendingInstructionsCapture(event) {
     if (!String(event.text ?? '').trim()) {
       return messageResponse([
         this.t('coordinator.instructions.editNeedsText'),
         this.t('coordinator.instructions.editHint'),
       ], this.buildScopedSessionMeta(event));
     }
-    return this.applyInstructionsContent(event, event.text);
+    const scopeRef = toScopeRef(event);
+    return this.proposeInstructionsLiteralReplace(event, scopeRef, event.text, 'capture');
   }
 
   async renderInstructionsStatus(event) {
+    const scopeRef = toScopeRef(event);
     const snapshot = await this.codexInstructionsManager.readInstructions();
     const lines = [
       this.t('coordinator.instructions.current', {
@@ -1483,24 +1555,125 @@ export class BridgeCoordinator {
       this.t('coordinator.instructions.usage'),
       this.t('coordinator.instructions.help'),
     ];
-    if (this.hasPendingInstructionsEdit(event)) {
+    if (this.hasPendingInstructionsCapture(event)) {
       lines.push(this.t('coordinator.instructions.editPending'));
+    }
+    const operation = this.getPendingInstructionsOperation(scopeRef);
+    if (operation) {
+      lines.push('');
+      lines.push(this.t('coordinator.instructions.draftPending'));
+      lines.push(...this.buildInstructionsOperationPreviewLines(operation));
     }
     return messageResponse(lines, this.buildScopedSessionMeta(event));
   }
 
-  async applyInstructionsContent(event, content: string) {
+  async proposeInstructionsLiteralReplace(
+    event,
+    scopeRef: PlatformScopeRef,
+    content: string,
+    source: 'set' | 'capture',
+  ) {
+    const snapshot = await this.codexInstructionsManager.readInstructions();
+    const operation = buildInstructionsOperation({
+      kind: 'replace',
+      createdAt: this.now(),
+      rawInput: String(content ?? ''),
+      summary: this.t('coordinator.instructions.defaultSummary.replace'),
+      changes: [this.t('coordinator.instructions.defaultChange.replace')],
+      proposedContent: normalizeInstructionsDocumentContent(content),
+      baseContent: snapshot.content,
+      normalizedBy: 'local',
+    });
+    this.clearPendingInstructionsCapture(event);
+    this.setPendingInstructionsOperation(scopeRef, operation);
+    return messageResponse(
+      this.buildInstructionsDraftResponseLines(operation, {
+        includeEditHint: true,
+        includeSourceNotice: source === 'capture',
+      }),
+      this.buildScopedSessionMeta(event),
+    );
+  }
+
+  async proposeInstructionsClear(event, scopeRef: PlatformScopeRef) {
+    const snapshot = await this.codexInstructionsManager.readInstructions();
+    const operation = buildInstructionsOperation({
+      kind: 'clear',
+      createdAt: this.now(),
+      rawInput: String(event.text ?? ''),
+      summary: this.t('coordinator.instructions.defaultSummary.clear'),
+      changes: [this.t('coordinator.instructions.defaultChange.clear')],
+      proposedContent: '',
+      baseContent: snapshot.content,
+      normalizedBy: 'local',
+    });
+    this.clearPendingInstructionsCapture(event);
+    this.setPendingInstructionsOperation(scopeRef, operation);
+    return messageResponse(
+      this.buildInstructionsDraftResponseLines(operation, {
+        includeEditHint: true,
+      }),
+      this.buildScopedSessionMeta(event),
+    );
+  }
+
+  buildInstructionsOperationPreviewLines(operation: PendingInstructionsOperation): string[] {
+    const lines = [
+      this.t('coordinator.instructions.draftTitle'),
+      this.t('coordinator.instructions.draftKind', {
+        value: formatInstructionsProposalKind(operation.kind, this.currentI18n),
+      }),
+      this.t('coordinator.instructions.draftSummary', {
+        value: operation.summary || defaultInstructionsSummary(operation.kind, this.currentI18n),
+      }),
+    ];
+    if (operation.changes.length > 0) {
+      lines.push(this.t('coordinator.instructions.draftChangesTitle'));
+      lines.push(...operation.changes.map((change, index) => `${index + 1}. ${change}`));
+    }
+    lines.push(this.t('coordinator.instructions.draftContentTitle'));
+    lines.push(...formatInstructionsContentPreview(operation.proposedContent, this.currentI18n));
+    return lines;
+  }
+
+  buildInstructionsDraftResponseLines(
+    operation: PendingInstructionsOperation,
+    {
+      includeEditHint = true,
+      includeSourceNotice = false,
+    }: {
+      includeEditHint?: boolean;
+      includeSourceNotice?: boolean;
+    } = {},
+  ): string[] {
+    const lines = this.buildInstructionsOperationPreviewLines(operation);
+    if (includeSourceNotice) {
+      lines.push(this.t('coordinator.instructions.captureNotice'));
+    }
+    lines.push(this.t('coordinator.instructions.draftNotice'));
+    lines.push(this.t('coordinator.instructions.confirmHint'));
+    if (includeEditHint) {
+      lines.push(this.t('coordinator.instructions.editDraftHint'));
+    }
+    lines.push(this.t('coordinator.instructions.cancelHint'));
+    return lines;
+  }
+
+  async applyPendingInstructionsOperation(event, scopeRef: PlatformScopeRef, operation: PendingInstructionsOperation) {
     if (this.activeTurns?.hasAnyActiveTurn?.()) {
       return messageResponse([
         this.t('coordinator.instructions.blocked'),
       ], this.buildScopedSessionMeta(event));
     }
     try {
-      const snapshot = await this.codexInstructionsManager.writeInstructions(content);
-      this.clearPendingInstructionsEdit(event);
+      const snapshot = operation.kind === 'clear'
+        ? await this.codexInstructionsManager.clearInstructions()
+        : await this.codexInstructionsManager.writeInstructions(operation.proposedContent);
+      this.clearPendingInstructionsCapture(event);
+      this.clearPendingInstructionsOperation(scopeRef);
       const reconnectSummary = await this.reconnectCodexBackedProfiles();
       return messageResponse(this.renderInstructionsSavedLines({
-        action: 'saved',
+        action: operation.kind === 'clear' ? 'cleared' : 'saved',
         snapshot,
         reconnectSummary,
       }), this.buildScopedSessionMeta(event));
@@ -1512,12 +1685,14 @@ export class BridgeCoordinator {
   }
 
   cancelInstructionsEdit(event) {
-    if (!this.hasPendingInstructionsEdit(event)) {
+    const scopeRef = toScopeRef(event);
+    if (!this.hasPendingInstructionsCapture(event) && !this.getPendingInstructionsOperation(scopeRef)) {
       return messageResponse([
         this.t('coordinator.instructions.editNotPending'),
       ], this.buildScopedSessionMeta(event));
     }
-    this.clearPendingInstructionsEdit(event);
+    this.clearPendingInstructionsCapture(event);
+    this.clearPendingInstructionsOperation(scopeRef);
     return messageResponse([
       this.t('coordinator.instructions.editCancelled'),
     ], this.buildScopedSessionMeta(event));
@@ -3433,56 +3608,210 @@ export class BridgeCoordinator {
   }
 
   async handleInstructionsCommand(event, args) {
-    const action = String(args[0] ?? '').trim().toLowerCase();
+    const scopeRef = toScopeRef(event);
+    const normalizedArgs = Array.isArray(args) ? args.map((value) => String(value ?? '').trim()) : [];
+    const action = String(normalizedArgs[0] ?? '').trim().toLowerCase();
     if (!action) {
       return this.renderInstructionsStatus(event);
+    }
+    if (HELP_FLAG_SET.has(action)) {
+      return this.handleHelpsCommand(event, ['instructions']);
     }
     if (action === 'cancel') {
       return this.cancelInstructionsEdit(event);
     }
+    if (['ok', 'confirm'].includes(action)) {
+      const operation = this.getPendingInstructionsOperation(scopeRef);
+      if (!operation) {
+        return messageResponse([
+          this.t('coordinator.instructions.noDraft'),
+        ], this.buildScopedSessionMeta(event));
+      }
+      return this.applyPendingInstructionsOperation(event, scopeRef, operation);
+    }
     if (action === 'clear') {
-      if (this.activeTurns?.hasAnyActiveTurn?.()) {
-        return messageResponse([
-          this.t('coordinator.instructions.blocked'),
-        ], this.buildScopedSessionMeta(event));
+      if (normalizedArgs.length > 1) {
+        return this.handleHelpsCommand(event, ['instructions']);
       }
-      try {
-        const snapshot = await this.codexInstructionsManager.clearInstructions();
-        this.clearPendingInstructionsEdit(event);
-        const reconnectSummary = await this.reconnectCodexBackedProfiles();
-        return messageResponse(this.renderInstructionsSavedLines({
-          action: 'cleared',
-          snapshot,
-          reconnectSummary,
-        }), this.buildScopedSessionMeta(event));
-      } catch (error) {
-        return messageResponse([
-          this.t('coordinator.instructions.failed', { error: formatUserError(error) }),
-        ], this.buildScopedSessionMeta(event));
-      }
+      return this.proposeInstructionsClear(event, scopeRef);
     }
     if (action === 'edit') {
-      this.setPendingInstructionsEdit(event);
-      return messageResponse([
-        this.t('coordinator.instructions.editArmed'),
-        this.t('coordinator.instructions.editHint'),
-      ], this.buildScopedSessionMeta(event));
-    }
-    if (action === 'set') {
-      const inlineContent = extractInstructionsInlineContent(event.text);
-      if (!inlineContent) {
-        this.setPendingInstructionsEdit(event);
+      const editInstruction = extractInstructionsEditBody(event.text);
+      if (!editInstruction) {
+        this.setPendingInstructionsCapture(event);
         return messageResponse([
           this.t('coordinator.instructions.editArmed'),
           this.t('coordinator.instructions.editHint'),
         ], this.buildScopedSessionMeta(event));
       }
-      return this.applyInstructionsContent(event, inlineContent);
+      return this.handleInstructionsNaturalCommand(event, scopeRef, {
+        subcommand: 'edit',
+        userInput: editInstruction,
+      });
     }
-    return messageResponse([
-      this.t('coordinator.instructions.usage'),
-      this.t('coordinator.instructions.help'),
-    ], this.buildScopedSessionMeta(event));
+    if (action === 'set') {
+      const inlineContent = extractInstructionsInlineContent(event.text);
+      if (!inlineContent) {
+        this.setPendingInstructionsCapture(event);
+        return messageResponse([
+          this.t('coordinator.instructions.editArmed'),
+          this.t('coordinator.instructions.editHint'),
+        ], this.buildScopedSessionMeta(event));
+      }
+      return this.proposeInstructionsLiteralReplace(event, scopeRef, inlineContent, 'set');
+    }
+    const rawInput = compactWhitespace(normalizedArgs.join(' '));
+    if (!rawInput) {
+      return this.handleHelpsCommand(event, ['instructions']);
+    }
+    return this.handleInstructionsNaturalCommand(event, scopeRef, {
+      subcommand: 'natural',
+      userInput: rawInput,
+    });
+  }
+
+  async handleInstructionsNaturalCommand(
+    event: InboundTextEvent,
+    scopeRef: PlatformScopeRef,
+    {
+      subcommand,
+      userInput,
+    }: {
+      subcommand: 'natural' | 'edit';
+      userInput: string;
+    },
+  ) {
+    const currentInstructions = await this.codexInstructionsManager.readInstructions();
+    const pendingDraft = this.getPendingInstructionsOperation(scopeRef);
+    const commandResult = await this.normalizeInstructionsCommandWithCodex(event, scopeRef, {
+      subcommand,
+      userInput,
+      currentInstructions,
+      pendingDraft,
+    }).catch(() => null);
+    if (!commandResult) {
+      return messageResponse([
+        this.t('coordinator.instructions.parseFailed'),
+      ], this.buildScopedSessionMeta(event));
+    }
+    return this.handleInstructionsCommandSkillResult(
+      event,
+      scopeRef,
+      userInput,
+      currentInstructions,
+      commandResult,
+      pendingDraft,
+    );
+  }
+
+  async normalizeInstructionsCommandWithCodex(
+    event: InboundTextEvent,
+    scopeRef: PlatformScopeRef,
+    {
+      subcommand,
+      userInput,
+      currentInstructions,
+      pendingDraft = null,
+    }: {
+      subcommand: 'natural' | 'edit';
+      userInput: string;
+      currentInstructions: CodexInstructionsSnapshot;
+      pendingDraft?: PendingInstructionsOperation | null;
+    },
+  ): Promise<InstructionsCommandSkillResult | null> {
+    const boundSession = this.bridgeSessions.resolveScopeSession(scopeRef);
+    const providerProfile = boundSession
+      ? this.requireProviderProfile(boundSession.providerProfileId)
+      : this.resolveScopeProviderProfile(scopeRef);
+    const providerPlugin = this.providerRegistry.getProvider(providerProfile.providerKind);
+    if (!providerPlugin || typeof providerPlugin.startThread !== 'function' || typeof providerPlugin.startTurn !== 'function') {
+      return null;
+    }
+    const inheritedSettings = boundSession
+      ? this.bridgeSessions.getSessionSettings(boundSession.id)
+      : null;
+    const locale = inheritedSettings?.locale ?? this.resolveScopeLocale(scopeRef, event);
+    const cwd = normalizeCwd(boundSession?.cwd) ?? this.resolveEventCwd(event) ?? null;
+    return this.invokeCommandSkillTurn<InstructionsCommandSkillResult>({
+      event,
+      providerProfile,
+      providerPlugin,
+      title: 'Instructions Command Skill',
+      metadata: {
+        source: 'instructions-command-skill',
+        command: 'instructions',
+        subcommand,
+      },
+      cwd,
+      locale,
+      model: inheritedSettings?.model ?? null,
+      reasoningEffort: inheritedSettings?.reasoningEffort ?? null,
+      serviceTier: inheritedSettings?.serviceTier ?? null,
+      buildPrompt: (sessionCwd) => buildInstructionsCommandSkillPrompt({
+        event,
+        subcommand,
+        userInput,
+        locale,
+        now: this.now(),
+        cwd: sessionCwd,
+        currentInstructions,
+        pendingDraft,
+      }),
+      parseResult: parseInstructionsCommandSkillResult,
+    });
+  }
+
+  handleInstructionsCommandSkillResult(
+    event: InboundTextEvent,
+    scopeRef: PlatformScopeRef,
+    rawInput: string,
+    currentInstructions: CodexInstructionsSnapshot,
+    result: InstructionsCommandSkillResult,
+    pendingDraft: PendingInstructionsOperation | null = null,
+  ) {
+    if (result.action === 'clarify') {
+      return this.renderInstructionsClarifyResponse(event, result.question, result.candidates);
+    }
+    if (result.action === 'reject' || result.action === 'local_only') {
+      return messageResponse([
+        result.reason || this.t('coordinator.instructions.parseFailed'),
+      ], this.buildScopedSessionMeta(event));
+    }
+    const operation = buildPendingInstructionsOperationFromSkillResult({
+      now: this.now(),
+      rawInput,
+      result,
+      currentContent: currentInstructions.content,
+      pendingDraft,
+    });
+    if (!operation) {
+      return messageResponse([
+        this.t('coordinator.instructions.parseFailed'),
+      ], this.buildScopedSessionMeta(event));
+    }
+    this.clearPendingInstructionsCapture(event);
+    this.setPendingInstructionsOperation(scopeRef, operation);
+    return messageResponse(
+      this.buildInstructionsDraftResponseLines(operation),
+      this.buildScopedSessionMeta(event),
+    );
+  }
+
+  renderInstructionsClarifyResponse(event: InboundTextEvent, question: string, candidates: Array<Record<string, unknown>>) {
+    const lines = [
+      question || this.t('coordinator.instructions.parseFailed'),
+    ];
+    if (Array.isArray(candidates) && candidates.length > 0) {
+      lines.push(this.t('coordinator.instructions.candidatesTitle'));
+      for (const [index, candidate] of candidates.slice(0, MAX_CLARIFY_CANDIDATES).entries()) {
+        const label = [
+          candidate.index ? `${candidate.index}.` : `${index + 1}.`,
+          compactWhitespace(candidate.label ?? candidate.title ?? candidate.kind ?? this.t('common.unknown')),
+        ].filter(Boolean).join(' ');
+        lines.push(label);
+      }
+    }
+    return messageResponse(lines, this.buildScopedSessionMeta(event));
   }
 
   async handleFastCommand(event, args) {
@@ -9783,6 +10112,71 @@ function formatReviewTargetTitle(target: ProviderReviewTarget, i18n: Translator)
   }
 }
 
+function buildInstructionsCommandSkillPrompt({
+  event,
+  subcommand,
+  userInput,
+  locale,
+  now,
+  cwd,
+  currentInstructions,
+  pendingDraft,
+}: {
+  event: InboundTextEvent;
+  subcommand: 'natural' | 'edit';
+  userInput: string;
+  locale: string | null;
+  now: number;
+  cwd: string | null;
+  currentInstructions: CodexInstructionsSnapshot;
+  pendingDraft: PendingInstructionsOperation | null;
+}): string {
+  const payload = {
+    command: 'instructions',
+    subcommand,
+    rawText: String(event.text ?? ''),
+    userInput,
+    now: new Date(now).toISOString(),
+    locale: normalizeLocale(locale) ?? 'zh-CN',
+    scope: {
+      platform: event.platform,
+      externalScopeId: event.externalScopeId,
+    },
+    cwd,
+    instructionsPath: currentInstructions.path,
+    currentInstructions: {
+      exists: currentInstructions.exists,
+      content: currentInstructions.content,
+    },
+    pendingDraft: pendingDraft
+      ? {
+        kind: pendingDraft.kind,
+        rawInput: pendingDraft.rawInput,
+        baseContent: pendingDraft.baseContent,
+        proposedContent: pendingDraft.proposedContent,
+        summary: pendingDraft.summary,
+        changes: pendingDraft.changes,
+      }
+      : null,
+    capabilities: {
+      supportedActions: [...INSTRUCTIONS_COMMAND_SKILL_ACTIONS],
+      supportedProposalKinds: ['patch', 'replace', 'clear'],
+    },
+    skillPath: INSTRUCTIONS_COMMAND_SKILL_PATH,
+  };
+  return [
+    'CodexBridge command skill invocation.',
+    '',
+    `Please read and follow this command skill file: ${INSTRUCTIONS_COMMAND_SKILL_PATH}`,
+    'Use it to interpret the /instructions command request below.',
+    'Return exactly one JSON object that matches the skill contract.',
+    'Do not use Markdown. Do not explain. Do not write files or execute anything.',
+    '',
+    'Invocation payload:',
+    JSON.stringify(payload, null, 2),
+  ].join('\n');
+}
+
 function buildReviewCommandSkillPrompt({
   event,
   userInput,
@@ -9873,6 +10267,75 @@ function parseReviewTargetArgs(args: readonly string[]): ReviewTargetParseResult
       : { status: 'missing_args' };
   }
   return { status: 'unknown' };
+}
+
+function parseInstructionsCommandSkillResult(value: unknown): InstructionsCommandSkillResult | null {
+  const parsed = parseJsonObject(value);
+  if (!parsed) {
+    return null;
+  }
+  const action = normalizeInstructionsCommandSkillAction(parsed.action);
+  if (!action) {
+    return null;
+  }
+  const confidence = clampAssistantConfidence(Number(parsed.confidence ?? 0.8));
+  if (action === 'clarify') {
+    return {
+      action,
+      confidence,
+      question: compactWhitespace(parsed.question ?? parsed.message ?? ''),
+      candidates: Array.isArray(parsed.candidates) ? parsed.candidates.filter((entry) => entry && typeof entry === 'object') : [],
+    };
+  }
+  if (action === 'reject' || action === 'local_only') {
+    return {
+      action,
+      confidence,
+      reason: normalizeNullableText(parsed.reason ?? parsed.message),
+    };
+  }
+  const summary = compactWhitespace(parsed.summary ?? parsed.changeSummary ?? parsed.message ?? '');
+  const changes = normalizeStringArray(parsed.changes ?? parsed.changeList ?? parsed.change_list);
+  const proposedContent = action === 'propose_clear'
+    ? ''
+    : normalizeInstructionsDocumentContent(parsed.proposedContent ?? parsed.content ?? parsed.instructions ?? '');
+  if (!summary) {
+    return null;
+  }
+  if (action === 'update_pending_draft') {
+    const proposalKind = normalizeInstructionsProposalKind(parsed.proposalKind ?? parsed.kind ?? parsed.proposal_type);
+    if (!proposalKind) {
+      return null;
+    }
+    if (proposalKind !== 'clear' && !proposedContent) {
+      return null;
+    }
+    return {
+      action,
+      confidence,
+      proposalKind,
+      summary,
+      changes,
+      proposedContent: proposalKind === 'clear' ? '' : proposedContent,
+    };
+  }
+  if (action !== 'propose_clear' && !proposedContent) {
+    return null;
+  }
+  return {
+    action,
+    confidence,
+    summary,
+    changes,
+    proposedContent,
+  };
+}
+
+function normalizeInstructionsCommandSkillAction(value: unknown): InstructionsCommandSkillResult['action'] | null {
+  const normalized = compactWhitespace(value).toLowerCase();
+  return INSTRUCTIONS_COMMAND_SKILL_ACTIONS.has(normalized as InstructionsCommandSkillResult['action'])
+    ? normalized as InstructionsCommandSkillResult['action']
+    : null;
 }
 
 function parseReviewCommandSkillResult(value: unknown): ReviewCommandSkillResult | null {
@@ -9967,6 +10430,152 @@ function parseReviewTargetFromSkill(value: unknown): ProviderReviewTarget | null
     };
   }
   return null;
+}
+
+function normalizeInstructionsDocumentContent(value: unknown): string {
+  return String(value ?? '').replace(/\r\n/g, '\n').trim();
+}
+
+function normalizeInstructionsProposalKind(value: unknown): InstructionsProposalKind | null {
+  const normalized = compactWhitespace(value).toLowerCase();
+  if (normalized === 'patch') return 'patch';
+  if (normalized === 'replace') return 'replace';
+  if (normalized === 'clear') return 'clear';
+  return null;
+}
+
+function buildInstructionsOperation({
+  kind,
+  createdAt,
+  rawInput,
+  summary,
+  changes,
+  proposedContent,
+  baseContent,
+  normalizedBy,
+}: PendingInstructionsOperation): PendingInstructionsOperation {
+  return {
+    kind,
+    createdAt,
+    rawInput,
+    summary: compactWhitespace(summary),
+    changes: normalizeStringArray(changes),
+    proposedContent: kind === 'clear' ? '' : normalizeInstructionsDocumentContent(proposedContent),
+    baseContent: String(baseContent ?? '').replace(/\r\n/g, '\n'),
+    normalizedBy,
+  };
+}
+
+function buildPendingInstructionsOperationFromSkillResult({
+  now,
+  rawInput,
+  result,
+  currentContent,
+  pendingDraft,
+}: {
+  now: number;
+  rawInput: string;
+  result: InstructionsCommandSkillResult;
+  currentContent: string;
+  pendingDraft: PendingInstructionsOperation | null;
+}): PendingInstructionsOperation | null {
+  const baseContent = pendingDraft?.baseContent ?? String(currentContent ?? '');
+  if (result.action === 'propose_patch') {
+    return buildInstructionsOperation({
+      kind: 'patch',
+      createdAt: now,
+      rawInput,
+      summary: result.summary,
+      changes: result.changes,
+      proposedContent: result.proposedContent,
+      baseContent,
+      normalizedBy: 'codex',
+    });
+  }
+  if (result.action === 'propose_replace') {
+    return buildInstructionsOperation({
+      kind: 'replace',
+      createdAt: now,
+      rawInput,
+      summary: result.summary,
+      changes: result.changes,
+      proposedContent: result.proposedContent,
+      baseContent: String(currentContent ?? ''),
+      normalizedBy: 'codex',
+    });
+  }
+  if (result.action === 'propose_clear') {
+    return buildInstructionsOperation({
+      kind: 'clear',
+      createdAt: now,
+      rawInput,
+      summary: result.summary,
+      changes: result.changes,
+      proposedContent: '',
+      baseContent: String(currentContent ?? ''),
+      normalizedBy: 'codex',
+    });
+  }
+  if (result.action === 'update_pending_draft') {
+    if (!pendingDraft) {
+      return null;
+    }
+    return buildInstructionsOperation({
+      kind: result.proposalKind,
+      createdAt: now,
+      rawInput: appendInstructionsDraftEditInput(pendingDraft.rawInput, rawInput),
+      summary: result.summary,
+      changes: result.changes,
+      proposedContent: result.proposalKind === 'clear' ? '' : result.proposedContent,
+      baseContent: pendingDraft.baseContent,
+      normalizedBy: 'codex',
+    });
+  }
+  return null;
+}
+
+function appendInstructionsDraftEditInput(rawInput: string, editInstruction: string): string {
+  const parts = [compactWhitespace(rawInput), compactWhitespace(editInstruction)].filter(Boolean);
+  return parts.join('\n');
+}
+
+function formatInstructionsProposalKind(kind: InstructionsProposalKind, i18n: Translator): string {
+  switch (kind) {
+    case 'patch':
+      return i18n.t('coordinator.instructions.kind.patch');
+    case 'replace':
+      return i18n.t('coordinator.instructions.kind.replace');
+    case 'clear':
+      return i18n.t('coordinator.instructions.kind.clear');
+    default:
+      return i18n.t('common.unknown');
+  }
+}
+
+function defaultInstructionsSummary(kind: InstructionsProposalKind, i18n: Translator): string {
+  switch (kind) {
+    case 'patch':
+      return i18n.t('coordinator.instructions.defaultSummary.patch');
+    case 'replace':
+      return i18n.t('coordinator.instructions.defaultSummary.replace');
+    case 'clear':
+      return i18n.t('coordinator.instructions.defaultSummary.clear');
+    default:
+      return i18n.t('coordinator.instructions.defaultSummary.patch');
+  }
+}
+
+function formatInstructionsContentPreview(content: string, i18n: Translator): string[] {
+  const normalized = normalizeInstructionsDocumentContent(content);
+  if (!normalized) {
+    return [i18n.t('coordinator.instructions.draftEmptyContent')];
+  }
+  const lines = normalized.split('\n');
+  const preview = lines.slice(0, 24);
+  if (lines.length > preview.length) {
+    preview.push('...');
+  }
+  return preview;
 }
 
 function shouldTranslateReviewOutput(text: string, locale: SupportedLocale): boolean {
@@ -14226,16 +14835,21 @@ function getCommandHelpSpecs(i18n: Translator) {
     summary: i18n.t('coordinator.help.summary.instructions'),
     usage: [
       '/instructions',
+      '/instructions <natural language>',
       '/instructions set <text>',
       '/instructions edit',
+      '/instructions edit <change request>',
       '/instructions clear',
+      '/instructions ok',
       '/instructions cancel',
       '/instructions -h',
     ],
     examples: [
       '/instructions',
+      '/instructions 以后回答更简短一点，并默认用中文回复微信文本消息。',
       '/instructions set Always explain the tradeoffs before editing.',
       '/instructions edit',
+      '/instructions edit 把附件规则删掉，但保留工程规范。',
       '/instructions clear',
     ],
     notes: [
@@ -16907,17 +17521,30 @@ function formatAccessPreset(preset) {
   return 'default';
 }
 
+function buildInstructionsOperationKey(scopeRef: PlatformScopeRef) {
+  return formatPlatformScopeKey(scopeRef.platform, scopeRef.externalScopeId);
+}
+
 function buildInstructionsEditKey(event) {
-  return formatPlatformScopeKey(event.platform, event.externalScopeId);
+  return buildInstructionsOperationKey(toScopeRef(event));
 }
 
 function extractInstructionsInlineContent(text: string) {
   const raw = String(text ?? '');
-  const match = raw.match(/^\/instructions\s+set(?:\s+|$)([\s\S]*)$/iu);
+  const match = raw.match(/^\/(?:instructions|ins)\s+set(?:\s+|$)([\s\S]*)$/iu);
   if (!match) {
     return '';
   }
   return match[1] ?? '';
+}
+
+function extractInstructionsEditBody(text: string) {
+  const raw = String(text ?? '');
+  const match = raw.match(/^\/(?:instructions|ins)\s+edit(?:\s+|$)([\s\S]*)$/iu);
+  if (!match) {
+    return '';
+  }
+  return compactWhitespace(match[1] ?? '');
 }
 
 function renderPermissionsLines(settings, i18n: Translator) {

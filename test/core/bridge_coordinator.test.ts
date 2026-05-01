@@ -6,6 +6,7 @@ import test from 'node:test';
 import {
   resolveOpenAIAgentRuntimeConfig,
   AGENT_COMMAND_SKILL_ACTIONS,
+  INSTRUCTIONS_COMMAND_SKILL_ACTIONS,
   REVIEW_COMMAND_SKILL_ACTIONS,
 } from '../../src/core/bridge_coordinator.js';
 import { createCodexBridgeRuntime } from '../../src/runtime/bootstrap.js';
@@ -2212,7 +2213,7 @@ test('/login 1 is blocked when any active turn is still running', async () => {
   assert.equal(codexAuthManager.switchCalls.length, 0);
 });
 
-test('/instructions shows current content, supports inline set, and refreshes codex-backed profiles', async () => {
+test('/instructions shows current content, stages inline set, and applies it on ok', async () => {
   const codexInstructionsManager = makeFakeCodexInstructionsManager({
     content: 'Always explain tradeoffs first.\n',
     exists: true,
@@ -2234,14 +2235,26 @@ test('/instructions shows current content, supports inline set, and refreshes co
     text: '/instructions set Prefer concise final answers.',
   });
   const savedText = saved.messages.map((message) => message.text ?? '').join('\n');
-  assert.match(savedText, /自定义指令已更新/);
-  assert.match(savedText, /已刷新 2 个 Codex 会话/);
+  assert.match(savedText, /已生成自定义指令修改草案/);
+  assert.match(savedText, /确认：\/instructions ok/);
+  assert.equal(codexInstructionsManager.state.content, 'Always explain tradeoffs first.\n');
+  assert.equal(openai.reconnectProfileCalls.length, 0);
+  assert.equal(minimax.reconnectProfileCalls.length, 0);
+
+  const confirmed = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-instructions-1',
+    text: '/instructions ok',
+  });
+  const confirmedText = confirmed.messages.map((message) => message.text ?? '').join('\n');
+  assert.match(confirmedText, /自定义指令已更新/);
+  assert.match(confirmedText, /已刷新 2 个 Codex 会话/);
   assert.equal(codexInstructionsManager.state.content, 'Prefer concise final answers.\n');
   assert.equal(openai.reconnectProfileCalls.length, 1);
   assert.equal(minimax.reconnectProfileCalls.length, 1);
 });
 
-test('/instructions edit captures the next non-command message and clear removes the file', async () => {
+test('/instructions edit capture and clear both require confirmation before mutating AGENTS.md', async () => {
   const codexInstructionsManager = makeFakeCodexInstructionsManager();
   const { runtime } = makeRuntime({ codexInstructionsManager });
 
@@ -2257,7 +2270,17 @@ test('/instructions edit captures the next non-command message and clear removes
     externalScopeId: 'wx-user-instructions-2',
     text: 'Line 1\nLine 2',
   });
-  assert.match(captured.messages[0]?.text ?? '', /自定义指令已更新/);
+  const capturedText = captured.messages.map((message) => message.text ?? '').join('\n');
+  assert.match(capturedText, /已生成自定义指令修改草案/);
+  assert.match(capturedText, /Line 1/);
+  assert.equal(codexInstructionsManager.state.content, '');
+
+  const confirmedDraft = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-instructions-2',
+    text: '/instructions ok',
+  });
+  assert.match(confirmedDraft.messages[0]?.text ?? '', /自定义指令已更新/);
   assert.equal(codexInstructionsManager.state.content, 'Line 1\nLine 2\n');
 
   const cleared = await runtime.services.bridgeCoordinator.handleInboundEvent({
@@ -2265,11 +2288,95 @@ test('/instructions edit captures the next non-command message and clear removes
     externalScopeId: 'wx-user-instructions-2',
     text: '/instructions clear',
   });
-  assert.match(cleared.messages[0]?.text ?? '', /自定义指令已清空/);
+  const clearedText = cleared.messages.map((message) => message.text ?? '').join('\n');
+  assert.match(clearedText, /已生成自定义指令修改草案/);
+  assert.match(clearedText, /类型：清空/);
+  assert.equal(codexInstructionsManager.state.exists, true);
+
+  const confirmedClear = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-instructions-2',
+    text: '/instructions ok',
+  });
+  assert.match(confirmedClear.messages[0]?.text ?? '', /自定义指令已清空/);
   assert.equal(codexInstructionsManager.state.exists, false);
 });
 
-test('/instructions is blocked while any active turn is running', async () => {
+test('/instructions skill-based drafts can be edited before confirmation and ok is blocked while an active turn is running', async () => {
+  const codexInstructionsManager = makeFakeCodexInstructionsManager({
+    content: '# AGENTS\n- Keep answers concise.\n',
+    exists: true,
+  });
+  const { runtime, openai } = makeRuntime({ codexInstructionsManager });
+  const originalStartTurn = openai.startTurn.bind(openai);
+  openai.startTurn = async (params: any) => {
+    const parserInput = String(params?.inputText ?? '');
+    if (parserInput.includes('docs/command-skills/instructions.md') && parserInput.includes('"subcommand": "natural"')) {
+      assert.match(parserInput, /"currentInstructions"/);
+      return {
+        outputText: JSON.stringify({
+          schemaVersion: 'codexbridge.instructions-command-skill.v1',
+          ok: true,
+          action: 'propose_patch',
+          confidence: 0.96,
+          requiresConfirmation: true,
+          summary: '补充中文微信文本回复规则。',
+          changes: ['新增默认中文微信文本回复', '保持简短'],
+          proposedContent: '# AGENTS\n- Keep answers concise.\n- Default to Chinese text replies on WeChat.\n',
+        }),
+      };
+    }
+    if (parserInput.includes('docs/command-skills/instructions.md') && parserInput.includes('"subcommand": "edit"')) {
+      assert.match(parserInput, /"pendingDraft"/);
+      return {
+        outputText: JSON.stringify({
+          schemaVersion: 'codexbridge.instructions-command-skill.v1',
+          ok: true,
+          action: 'update_pending_draft',
+          confidence: 0.91,
+          requiresConfirmation: true,
+          proposalKind: 'patch',
+          summary: '在草案中继续补充附件限制。',
+          changes: ['补充不主动发送附件'],
+          proposedContent: '# AGENTS\n- Keep answers concise.\n- Default to Chinese text replies on WeChat.\n- Do not send attachments unless the user explicitly asks.\n',
+        }),
+      };
+    }
+    return originalStartTurn(params);
+  };
+
+  const drafted = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-instructions-busy',
+    text: '/instructions 把中文微信文本回复规则加进去',
+  });
+  const draftedText = drafted.messages.map((message) => message.text ?? '').join('\n');
+  assert.match(draftedText, /补充中文微信文本回复规则/);
+  assert.equal(codexInstructionsManager.state.content, '# AGENTS\n- Keep answers concise.\n');
+
+  const edited = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-instructions-busy',
+    text: '/instructions edit 再加一句不要主动发送附件',
+  });
+  const editedText = edited.messages.map((message) => message.text ?? '').join('\n');
+  assert.match(editedText, /在草案中继续补充附件限制/);
+  assert.match(editedText, /Do not send attachments unless the user explicitly asks/);
+
+  runtime.services.activeTurns.beginScopeTurn({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-some-running-turn',
+  });
+  const blocked = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-instructions-busy',
+    text: '/instructions ok',
+  });
+  assert.match(blocked.messages[0]?.text ?? '', /暂时不能修改全局自定义指令/);
+  assert.equal(codexInstructionsManager.state.content, '# AGENTS\n- Keep answers concise.\n');
+});
+
+test('/instructions ok is blocked while any active turn is running even for local clear drafts', async () => {
   const codexInstructionsManager = makeFakeCodexInstructionsManager();
   const { runtime } = makeRuntime({ codexInstructionsManager });
   runtime.services.activeTurns.beginScopeTurn({
@@ -2277,13 +2384,26 @@ test('/instructions is blocked while any active turn is running', async () => {
     externalScopeId: 'wx-user-instructions-busy',
   });
 
+  const drafted = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-instructions-3',
+    text: '/instructions clear',
+  });
+  assert.match(drafted.messages[0]?.text ?? '', /已生成自定义指令修改草案/);
+
   const result = await runtime.services.bridgeCoordinator.handleInboundEvent({
     platform: 'weixin',
     externalScopeId: 'wx-user-instructions-3',
     text: '/instructions clear',
   });
 
-  assert.match(result.messages[0]?.text ?? '', /暂时不能修改全局自定义指令/);
+  assert.match(result.messages[0]?.text ?? '', /已生成自定义指令修改草案/);
+  const confirm = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-instructions-3',
+    text: '/instructions ok',
+  });
+  assert.match(confirm.messages[0]?.text ?? '', /暂时不能修改全局自定义指令/);
   assert.equal(codexInstructionsManager.clears, 0);
 });
 
@@ -9880,5 +10000,27 @@ test('REVIEW_COMMAND_SKILL_ACTIONS matches actions declared in docs/command-skil
     missingInDoc,
     [],
     `Actions in REVIEW_COMMAND_SKILL_ACTIONS but missing from review.md: ${missingInDoc.join(', ')}`,
+  );
+});
+
+test('INSTRUCTIONS_COMMAND_SKILL_ACTIONS matches actions declared in docs/command-skills/instructions.md', () => {
+  const docPath = path.resolve('docs/command-skills/instructions.md');
+  const markdown = fs.readFileSync(docPath, 'utf-8');
+  const docActions = extractMarkdownTableActions(markdown);
+
+  assert.ok(docActions.size > 0, 'should extract at least one action from instructions.md action table');
+
+  const missingInCode = [...docActions].filter((a) => !INSTRUCTIONS_COMMAND_SKILL_ACTIONS.has(a as any));
+  const missingInDoc = [...INSTRUCTIONS_COMMAND_SKILL_ACTIONS].filter((a) => !docActions.has(a));
+
+  assert.deepEqual(
+    missingInCode,
+    [],
+    `Actions declared in instructions.md but missing from INSTRUCTIONS_COMMAND_SKILL_ACTIONS: ${missingInCode.join(', ')}`,
+  );
+  assert.deepEqual(
+    missingInDoc,
+    [],
+    `Actions in INSTRUCTIONS_COMMAND_SKILL_ACTIONS but missing from instructions.md: ${missingInDoc.join(', ')}`,
   );
 });
