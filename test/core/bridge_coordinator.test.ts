@@ -6144,6 +6144,14 @@ test('/review natural language uses the review command skill and preserves struc
   openai.startTurn = async (params: any) => {
     const parserInput = String(params?.inputText ?? '');
     if (parserInput.includes('docs/command-skills/review.md') && parserInput.includes('"command": "review"')) {
+      assert.deepEqual(params?.event?.metadata?.codexbridge?.developerPromptContext, {
+        mode: 'command-skill-parser',
+        title: 'Review Command Skill',
+        source: 'review-command-skill',
+        command: 'review',
+        subcommand: 'natural',
+        operation: null,
+      });
       assert.match(parserInput, /"customOptions": \[/);
       assert.doesNotMatch(parserInput, /outputLanguage/);
       return {

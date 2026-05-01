@@ -138,7 +138,10 @@ test('CodexProviderPlugin uses per-profile clients and forwards default model in
   assert.ok(calls.some((entry) => entry[0] === 'startThread' && entry[2] === 'gpt-5.4'));
   assert.ok(calls.some((entry) => entry[0] === 'startTurn' && entry[2] === 'gpt-5.4'));
   assert.match(String(seenDeveloperInstructions ?? ''), /CodexBridge runtime constraints/);
+  assert.match(String(seenDeveloperInstructions ?? ''), /CodexBridge turn mode:/);
+  assert.match(String(seenDeveloperInstructions ?? ''), /Standard bridge turn\./);
   assert.match(String(seenDeveloperInstructions ?? ''), /Do not call tool_suggest/);
+  assert.match(String(seenDeveloperInstructions ?? ''), /thread\/session lifecycle, slash-command state transitions, and final platform delivery/i);
 });
 
 test('CodexProviderPlugin normalizes legacy service tier values before calling the app client', async () => {
@@ -729,6 +732,76 @@ test('CodexProviderPlugin injects explicit plugin targeting instructions when th
   assert.match(String(seenDeveloperInstructions ?? ''), /gmail@openai-curated/);
   assert.match(String(seenDeveloperInstructions ?? ''), /gm/);
   assert.match(String(seenDeveloperInstructions ?? ''), /slash_use/);
+});
+
+test('CodexProviderPlugin injects parser-turn framing when the bridge marks an internal command-skill parse', async () => {
+  let seenDeveloperInstructions = null;
+  const plugin = makePlugin(() => ({
+    async start() {},
+    async startThread() {
+      return { threadId: 'thread-1', cwd: '/tmp/work', title: null };
+    },
+    async readThread(threadId: string) {
+      return { threadId, title: null, cwd: '/tmp/work' };
+    },
+    async listThreads() {
+      return { items: [], nextCursor: null };
+    },
+    async startTurn(params: any) {
+      seenDeveloperInstructions = params.developerInstructions;
+      return {
+        outputText: 'done',
+        threadId: params.threadId,
+        title: null,
+      };
+    },
+    async interruptTurn() {},
+    async listModels() {
+      return [{
+        id: 'gpt-5.4',
+        model: 'gpt-5.4',
+        displayName: 'GPT-5.4',
+        description: '',
+        isDefault: true,
+        supportedReasoningEfforts: ['medium'],
+        defaultReasoningEffort: 'medium',
+      }];
+    },
+  }));
+
+  await plugin.startTurn({
+    providerProfile: makeProfile(),
+    bridgeSession: makeBridgeSession(),
+    sessionSettings: makeSessionSettings({
+      accessPreset: 'read-only',
+      approvalPolicy: 'never',
+      sandboxMode: 'read-only',
+    }),
+    event: {
+      platform: 'weixin',
+      externalScopeId: 'wxid_1',
+      text: 'Return JSON only',
+      metadata: {
+        codexbridge: {
+          developerPromptContext: {
+            mode: 'command-skill-parser',
+            title: 'Agent Command Skill',
+            source: 'agent-command-skill',
+            command: 'agent',
+            subcommand: 'edit',
+            operation: 'rewrite_pending_draft',
+          },
+        },
+      },
+    },
+    inputText: 'Return JSON only',
+  });
+
+  assert.match(String(seenDeveloperInstructions ?? ''), /CodexBridge turn mode:/);
+  assert.match(String(seenDeveloperInstructions ?? ''), /Command-skill parser\./);
+  assert.match(String(seenDeveloperInstructions ?? ''), /Return only the structured result requested by the prompt or skill contract/i);
+  assert.match(String(seenDeveloperInstructions ?? ''), /Command context: \/agent edit/);
+  assert.match(String(seenDeveloperInstructions ?? ''), /Bridge operation: rewrite_pending_draft/);
 });
 
 test('CodexProviderPlugin preserves provider_error details from the app client', async () => {

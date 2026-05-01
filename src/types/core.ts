@@ -241,6 +241,22 @@ export interface TurnArtifactContext {
   intent: TurnArtifactIntent;
 }
 
+export type DeveloperPromptMode =
+  | 'standard'
+  | 'retry-recovery'
+  | 'command-skill-parser'
+  | 'review-result-localizer'
+  | 'agent-result-verifier';
+
+export interface DeveloperPromptContext {
+  mode: DeveloperPromptMode;
+  title?: string | null;
+  source?: string | null;
+  command?: string | null;
+  subcommand?: string | null;
+  operation?: string | null;
+}
+
 export type TurnArtifactDeliveryStage =
   | 'pending'
   | 'ready'

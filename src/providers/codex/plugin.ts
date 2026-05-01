@@ -2,7 +2,13 @@ import { CodexAppClient, createStderrLogger, readCodexAccountIdentity } from './
 import type { CodexTurnInput } from './app_client.js';
 import { CodexCliReviewRunner } from './review_runner.js';
 import { buildTurnArtifactDeveloperInstructions } from '../../core/turn_artifacts.js';
-import type { BridgeSession, SessionSettings, TurnArtifactContext } from '../../types/core.js';
+import type {
+  BridgeSession,
+  DeveloperPromptContext,
+  DeveloperPromptMode,
+  SessionSettings,
+  TurnArtifactContext,
+} from '../../types/core.js';
 import type { InboundAttachment, InboundTextEvent } from '../../types/platform.js';
 import type {
   ProviderAppInfo,
@@ -635,13 +641,21 @@ function describeAttachment(attachment: InboundAttachment): string {
 }
 
 function buildDeveloperInstructions(event: InboundTextEvent): string {
-  const parts: string[] = [CODEXBRIDGE_NON_INTERACTIVE_INSTRUCTIONS];
+  const retryContext = resolveRetryContext(event);
+  const turnModeInstructions = buildTurnModeDeveloperInstructions(
+    resolveDeveloperPromptContext(event),
+    retryContext,
+  );
+  const parts: string[] = [
+    CODEXBRIDGE_NON_INTERACTIVE_INSTRUCTIONS,
+    turnModeInstructions,
+  ];
   const artifactContext = resolveTurnArtifactContext(event);
   const artifactInstructions = buildTurnArtifactDeveloperInstructions(artifactContext);
   if (artifactInstructions) {
     parts.push(artifactInstructions);
   }
-  const retryInstructions = buildRetryDeveloperInstructions(resolveRetryContext(event));
+  const retryInstructions = buildRetryDeveloperInstructions(retryContext);
   if (retryInstructions) {
     parts.push(retryInstructions);
   }
@@ -655,6 +669,7 @@ function buildDeveloperInstructions(event: InboundTextEvent): string {
 const CODEXBRIDGE_NON_INTERACTIVE_INSTRUCTIONS = [
   'CodexBridge runtime constraints:',
   '- This turn is running inside a non-interactive chat bridge; the user cannot complete modal connector/plugin install prompts from here.',
+  '- CodexBridge owns thread/session lifecycle, slash-command state transitions, and final platform delivery for this turn.',
   '- Do not call tool_suggest or any interactive install/enable suggestion flow.',
   '- If a requested app, connector, MCP server, or auth scope is missing, say that briefly in the final answer and continue only with available local context.',
 ].join('\n');
@@ -681,6 +696,34 @@ function resolveTurnArtifactContext(event: InboundTextEvent): TurnArtifactContex
     return null;
   }
   return context as TurnArtifactContext;
+}
+
+function resolveDeveloperPromptContext(event: InboundTextEvent): DeveloperPromptContext | null {
+  const metadata = event?.metadata;
+  if (!metadata || typeof metadata !== 'object') {
+    return null;
+  }
+  const codexbridge = (metadata as Record<string, unknown>).codexbridge;
+  if (!codexbridge || typeof codexbridge !== 'object') {
+    return null;
+  }
+  const context = (codexbridge as Record<string, unknown>).developerPromptContext;
+  if (!context || typeof context !== 'object') {
+    return null;
+  }
+  const raw = context as Record<string, unknown>;
+  const mode = normalizeDeveloperPromptMode(raw.mode);
+  if (!mode) {
+    return null;
+  }
+  return {
+    mode,
+    title: normalizeDeveloperPromptContextValue(raw.title),
+    source: normalizeDeveloperPromptContextValue(raw.source),
+    command: normalizeDeveloperPromptContextValue(raw.command),
+    subcommand: normalizeDeveloperPromptContextValue(raw.subcommand),
+    operation: normalizeDeveloperPromptContextValue(raw.operation),
+  };
 }
 
 function resolveRetryContext(event: InboundTextEvent): Record<string, unknown> | null {
@@ -717,6 +760,75 @@ function resolveExplicitPluginTargets(event: InboundTextEvent): Record<string, u
     return [];
   }
   return [target as Record<string, unknown>];
+}
+
+function normalizeDeveloperPromptMode(value: unknown): DeveloperPromptMode | null {
+  const normalized = normalizeDeveloperPromptContextValue(value);
+  if (
+    normalized === 'standard'
+    || normalized === 'retry-recovery'
+    || normalized === 'command-skill-parser'
+    || normalized === 'review-result-localizer'
+    || normalized === 'agent-result-verifier'
+  ) {
+    return normalized;
+  }
+  return null;
+}
+
+function normalizeDeveloperPromptContextValue(value: unknown): string | null {
+  if (typeof value !== 'string') {
+    return null;
+  }
+  const normalized = value.trim();
+  return normalized || null;
+}
+
+function buildTurnModeDeveloperInstructions(
+  context: DeveloperPromptContext | null,
+  retryContext: Record<string, unknown> | null,
+): string {
+  const effectiveMode = context?.mode ?? (retryContext ? 'retry-recovery' : 'standard');
+  const lines = ['CodexBridge turn mode:'];
+  switch (effectiveMode) {
+    case 'retry-recovery':
+      lines.push('Retry recovery turn.');
+      lines.push('- This request is being retried on the same Codex thread after a manual stop.');
+      lines.push('- Reuse existing thread context when it helps, but answer the current request completely and directly.');
+      lines.push('- Treat the retry metadata below as context, not as a reason to skip a fresh answer.');
+      break;
+    case 'command-skill-parser':
+      lines.push('Command-skill parser.');
+      lines.push('- This is an internal parsing turn. Return only the structured result requested by the prompt or skill contract.');
+      lines.push('- Do not execute the requested action, persist state, fabricate confirmations, or continue as a normal user-facing conversation.');
+      if (context?.command) {
+        lines.push(`- Command context: /${context.command}${context.subcommand ? ` ${context.subcommand}` : ''}`);
+      }
+      if (context?.operation) {
+        lines.push(`- Bridge operation: ${context.operation}`);
+      }
+      break;
+    case 'review-result-localizer':
+      lines.push('Review result localizer.');
+      lines.push('- This is an internal localization turn. Preserve findings, severity labels, ordering, and code references exactly while localizing the text.');
+      lines.push('- Do not add, remove, soften, or invent findings, caveats, or recommendations unless the prompt explicitly asks.');
+      break;
+    case 'agent-result-verifier':
+      lines.push('Agent result verifier.');
+      lines.push('- This is an internal verification turn. Judge whether the provided result satisfies the job and return only the requested verification schema.');
+      lines.push('- Do not start new work, modify files, or produce a normal user-facing assistant reply.');
+      break;
+    case 'standard':
+    default:
+      lines.push('Standard bridge turn.');
+      lines.push('- Produce the normal user-visible result for this turn unless another protocol block below makes this an internal parsing or localization task.');
+      lines.push('- Follow any attachment, retry, or plugin targeting protocol below only when its stated conditions apply.');
+      break;
+  }
+  if (context?.title && effectiveMode !== 'command-skill-parser') {
+    lines.push(`- Internal task title: ${context.title}`);
+  }
+  return lines.join('\n');
 }
 
 function buildRetryDeveloperInstructions(retryContext: Record<string, unknown> | null): string {

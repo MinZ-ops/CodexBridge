@@ -43,6 +43,7 @@ import type {
   AutomationMode,
   AutomationSchedule,
   BridgeSession,
+  DeveloperPromptContext,
   PlatformScopeRef,
   PluginAlias,
   SessionSettings,
@@ -2016,6 +2017,20 @@ export class BridgeCoordinator {
       timezone,
       localDraft,
     });
+    const parserEvent = withDeveloperPromptContext({
+      ...event,
+      text: prompt,
+      cwd: parserSession.cwd ?? null,
+      locale,
+      attachments: [],
+    }, {
+      mode: 'command-skill-parser',
+      title: 'Assistant Record Command Skill',
+      source: 'assistant-record-command-skill',
+      command: assistantCommandNameForType(forcedType),
+      subcommand: 'natural',
+      operation: 'classify_new_record',
+    });
     const result = await providerPlugin.startTurn({
       providerProfile,
       bridgeSession: parserSession,
@@ -2033,13 +2048,7 @@ export class BridgeCoordinator {
         metadata: {},
         updatedAt: this.now(),
       },
-      event: {
-        ...event,
-        text: prompt,
-        cwd: parserSession.cwd ?? null,
-        locale,
-        attachments: [],
-      },
+      event: parserEvent,
       inputText: prompt,
     });
     return parseAssistantRecordDraftCandidate(result.outputText, rawInput, forcedType, localDraft, 'codex');
@@ -2303,6 +2312,20 @@ export class BridgeCoordinator {
       timezone: extractEventTimezone(event),
       records,
     });
+    const routerEvent = withDeveloperPromptContext({
+      ...event,
+      text: prompt,
+      cwd: routerSession.cwd ?? null,
+      locale,
+      attachments: [],
+    }, {
+      mode: 'command-skill-parser',
+      title: 'Assistant Record Command Skill',
+      source: 'assistant-record-command-skill',
+      command: commandName,
+      subcommand: 'natural',
+      operation: 'route_existing_record',
+    });
     const result = await providerPlugin.startTurn({
       providerProfile,
       bridgeSession: routerSession,
@@ -2483,6 +2506,20 @@ export class BridgeCoordinator {
       targetRecord: record,
       instructions,
     });
+    const parserEvent = withDeveloperPromptContext({
+      ...event,
+      text: prompt,
+      cwd: parserSession.cwd ?? null,
+      locale,
+      attachments: [],
+    }, {
+      mode: 'command-skill-parser',
+      title: 'Assistant Record Command Skill',
+      source: 'assistant-record-command-skill',
+      command: assistantCommandNameForType(forcedType),
+      subcommand: 'edit',
+      operation: 'rewrite_record',
+    });
     const result = await providerPlugin.startTurn({
       providerProfile,
       bridgeSession: parserSession,
@@ -2500,13 +2537,7 @@ export class BridgeCoordinator {
         metadata: {},
         updatedAt: this.now(),
       },
-      event: {
-        ...event,
-        text: prompt,
-        cwd: parserSession.cwd ?? null,
-        locale,
-        attachments: [],
-      },
+      event: parserEvent,
       inputText: prompt,
     });
     const candidate = parseAssistantRecordRewriteCandidate(result.outputText, record, forcedType);
@@ -4549,6 +4580,20 @@ export class BridgeCoordinator {
       updatedAt: this.now(),
     };
     const prompt = buildPrompt(parserSession.cwd ?? null);
+    const parserEvent = withDeveloperPromptContext({
+      ...event,
+      text: prompt,
+      cwd: parserSession.cwd ?? null,
+      locale,
+      attachments: [],
+    }, {
+      mode: 'command-skill-parser',
+      title,
+      source: metadata.source ?? null,
+      command: metadata.command ?? null,
+      subcommand: metadata.subcommand ?? null,
+      operation: metadata.operation ?? null,
+    });
     const result = await providerPlugin.startTurn({
       providerProfile,
       bridgeSession: parserSession,
@@ -4566,13 +4611,7 @@ export class BridgeCoordinator {
         metadata: {},
         updatedAt: this.now(),
       },
-      event: {
-        ...event,
-        text: prompt,
-        cwd: parserSession.cwd ?? null,
-        locale,
-        attachments: [],
-      },
+      event: parserEvent,
       inputText: prompt,
     });
     return parseResult(result.outputText);
@@ -4734,6 +4773,18 @@ export class BridgeCoordinator {
       updatedAt: this.now(),
     };
     const prompt = buildReviewResultLocalizationPrompt(target, sourceText, locale);
+    const localizerEvent = withDeveloperPromptContext({
+      ...event,
+      text: prompt,
+      cwd: localizerSession.cwd ?? null,
+      locale,
+      attachments: [],
+    }, {
+      mode: 'review-result-localizer',
+      title: 'Review Result Localizer',
+      source: 'review-result-localizer',
+      command: 'review',
+    });
     const translated = await providerPlugin.startTurn({
       providerProfile,
       bridgeSession: localizerSession,
@@ -4751,13 +4802,7 @@ export class BridgeCoordinator {
         metadata: {},
         updatedAt: this.now(),
       },
-      event: {
-        ...event,
-        text: prompt,
-        cwd: localizerSession.cwd ?? null,
-        locale,
-        attachments: [],
-      },
+      event: localizerEvent,
       inputText: prompt,
     });
     const outputText = compactWhitespace(translated?.outputText ?? translated?.previewText ?? '');
@@ -8445,6 +8490,19 @@ export class BridgeCoordinator {
       pendingDraft,
       jobs: this.automationJobs.listForScope(scopeRef),
     });
+    const parserEvent = withDeveloperPromptContext({
+      ...event,
+      text: prompt,
+      cwd: parserSession.cwd ?? null,
+      locale,
+      attachments: [],
+    }, {
+      mode: 'command-skill-parser',
+      title: 'Automation Command Skill',
+      source: 'automation-command-skill',
+      command: 'auto',
+      subcommand,
+    });
     const result = await providerPlugin.startTurn({
       providerProfile,
       bridgeSession: parserSession,
@@ -8461,13 +8519,7 @@ export class BridgeCoordinator {
         metadata: {},
         updatedAt: this.now(),
       },
-      event: {
-        ...event,
-        text: prompt,
-        cwd: parserSession.cwd ?? null,
-        locale,
-        attachments: [],
-      },
+      event: parserEvent,
       inputText: prompt,
     });
     return parseAutomationCommandSkillResult(result.outputText);
@@ -9634,6 +9686,20 @@ export class BridgeCoordinator {
       updatedAt: this.now(),
     };
     const prompt = buildAgentVerifierPrompt(job, result, this.currentI18n.locale);
+    const verifierEvent = withDeveloperPromptContext({
+      platform: job.platform,
+      externalScopeId: job.externalScopeId,
+      text: prompt,
+      cwd: session?.cwd ?? job.cwd,
+      locale: job.locale ?? this.currentI18n.locale,
+      attachments: [],
+    }, {
+      mode: 'agent-result-verifier',
+      title: 'Agent Verifier',
+      source: 'agent-verifier',
+      command: 'agent',
+      operation: 'verify_result',
+    });
     const verifierResult = await providerPlugin.startTurn({
       providerProfile,
       bridgeSession: verifierSession,
@@ -9651,14 +9717,7 @@ export class BridgeCoordinator {
         metadata: {},
         updatedAt: this.now(),
       },
-      event: {
-        platform: job.platform,
-        externalScopeId: job.externalScopeId,
-        text: prompt,
-        cwd: session?.cwd ?? job.cwd,
-        locale: job.locale ?? this.currentI18n.locale,
-        attachments: [],
-      },
+      event: verifierEvent,
       inputText: prompt,
     });
     return parseAgentVerificationResult(verifierResult.outputText);
@@ -13476,6 +13535,18 @@ function withTurnArtifactContext(event: InboundTextEvent, turnArtifactContext) {
   }
   return withCodexbridgeMetadata(event, {
     turnArtifactContext,
+  });
+}
+
+function withDeveloperPromptContext(
+  event: InboundTextEvent,
+  developerPromptContext: DeveloperPromptContext | null | undefined,
+) {
+  if (!developerPromptContext || typeof developerPromptContext !== 'object') {
+    return event;
+  }
+  return withCodexbridgeMetadata(event, {
+    developerPromptContext,
   });
 }
 
