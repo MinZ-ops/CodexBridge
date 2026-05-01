@@ -11,6 +11,10 @@ import {
 } from '../../src/core/bridge_coordinator.js';
 import { createCodexBridgeRuntime } from '../../src/runtime/bootstrap.js';
 
+function normalizeCommandSkillInput(value: unknown) {
+  return String(value ?? '').replace(/\\/g, '/');
+}
+
 class FakeProviderPlugin {
   kind: string;
   displayName: string;
@@ -2310,7 +2314,7 @@ test('/instructions skill-based drafts can be edited before confirmation and ok 
   const { runtime, openai } = makeRuntime({ codexInstructionsManager });
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/instructions.md') && parserInput.includes('"subcommand": "natural"')) {
       assert.match(parserInput, /"currentInstructions"/);
       return {
@@ -2648,7 +2652,7 @@ test('/log uses model normalization and rewrites relative dates to absolute loca
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (args: any) => {
       openai.startTurnCalls.push(args);
-      if (String(args.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(args.inputText ?? '').includes('"operation": "classify_new_record"')) {
+      if (normalizeCommandSkillInput(args.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(args.inputText).includes('"operation": "classify_new_record"')) {
         return {
           outputText: JSON.stringify({
             type: 'log',
@@ -2691,7 +2695,7 @@ test('/log uses model normalization and rewrites relative dates to absolute loca
     assert.match(record?.title ?? '', /停机坪的报价以及工程量的测算/);
     assert.match(record?.content ?? '', /2026-04-28 UTC/);
     assert.doesNotMatch(record?.content ?? '', /昨天/);
-    assert.ok(openai.startTurnCalls.some((call: any) => String(call.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(call.inputText ?? '').includes('"operation": "classify_new_record"')));
+    assert.ok(openai.startTurnCalls.some((call: any) => normalizeCommandSkillInput(call.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(call.inputText).includes('"operation": "classify_new_record"')));
   } finally {
     Date.now = originalDateNow;
   }
@@ -2707,7 +2711,7 @@ test('/as uses Codex classification for required same-day work instead of local 
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (args: any) => {
       openai.startTurnCalls.push(args);
-      if (String(args.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(args.inputText ?? '').includes('"operation": "route_existing_record"')) {
+      if (normalizeCommandSkillInput(args.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(args.inputText).includes('"operation": "route_existing_record"')) {
         return {
           outputText: JSON.stringify({
             action: 'create',
@@ -2722,7 +2726,7 @@ test('/as uses Codex classification for required same-day work instead of local 
           title: args.bridgeSession.title,
         };
       }
-      if (String(args.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(args.inputText ?? '').includes('"operation": "classify_new_record"')) {
+      if (normalizeCommandSkillInput(args.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(args.inputText).includes('"operation": "classify_new_record"')) {
         return {
           outputText: JSON.stringify({
             type: 'todo',
@@ -2766,7 +2770,7 @@ test('/as uses Codex classification for required same-day work instead of local 
     assert.doesNotMatch(record?.content ?? '', /今天必须做完/);
     assert.doesNotMatch(record?.content ?? '', /给我列出来/);
     assert.doesNotMatch(record?.content ?? '', /高的优先级/);
-    assert.ok(openai.startTurnCalls.some((call: any) => String(call.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(call.inputText ?? '').includes('"operation": "classify_new_record"')));
+    assert.ok(openai.startTurnCalls.some((call: any) => normalizeCommandSkillInput(call.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(call.inputText).includes('"operation": "classify_new_record"')));
   } finally {
     Date.now = originalDateNow;
   }
@@ -2847,7 +2851,7 @@ test('/todo edit rewrites the pending todo through the assistant record command 
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    const input = String(args.inputText ?? '');
+    const input = normalizeCommandSkillInput(args.inputText);
     if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "classify_new_record"')) {
       return {
         outputText: JSON.stringify({
@@ -2934,7 +2938,7 @@ test('/todo natural language manages an existing todo through the assistant reco
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    const input = String(args.inputText ?? '');
+    const input = normalizeCommandSkillInput(args.inputText);
     if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "classify_new_record"')) {
       return {
         outputText: JSON.stringify({
@@ -3093,7 +3097,7 @@ test('/as natural language updates a matching assistant record after confirmatio
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    const input = String(args.inputText ?? '');
+    const input = normalizeCommandSkillInput(args.inputText);
     if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "route_existing_record"')) {
       if (input.includes('完全新的内容')) {
         return {
@@ -3239,7 +3243,7 @@ test('/as reminder wording creates a new reminder instead of merging into an unr
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    if (String(args.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(args.inputText ?? '').includes('"operation": "classify_new_record"')) {
+    if (normalizeCommandSkillInput(args.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(args.inputText).includes('"operation": "classify_new_record"')) {
       return {
         outputText: JSON.stringify({
           type: 'reminder',
@@ -3291,7 +3295,7 @@ test('/as reminder wording creates a new reminder instead of merging into an unr
   assert.equal(records[1]?.parsedJson?.normalizer, 'codex');
   assert.match(records[1]?.content ?? '', /邦杜库第四期/);
   assert.doesNotMatch(records[1]?.content ?? '', /墨盒发票/);
-  assert.ok(openai.startTurnCalls.some((call: any) => String(call.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(call.inputText ?? '').includes('"operation": "route_existing_record"')));
+  assert.ok(openai.startTurnCalls.some((call: any) => normalizeCommandSkillInput(call.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(call.inputText).includes('"operation": "route_existing_record"')));
 });
 
 test('/as edit can abandon a wrong update draft and create a new reminder', async () => {
@@ -3301,7 +3305,7 @@ test('/as edit can abandon a wrong update draft and create a new reminder', asyn
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    const input = String(args.inputText ?? '');
+    const input = normalizeCommandSkillInput(args.inputText);
     if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "route_existing_record"')) {
       if (input.includes('完全新的内容')) {
         return {
@@ -3399,7 +3403,7 @@ test('/as uses Codex rewrite to merge natural-language edits into the matched as
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (args: any) => {
       openai.startTurnCalls.push(args);
-      if (String(args.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(args.inputText ?? '').includes('"operation": "route_existing_record"')) {
+      if (normalizeCommandSkillInput(args.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(args.inputText).includes('"operation": "route_existing_record"')) {
         return {
           outputText: JSON.stringify({
             action: 'update',
@@ -3414,7 +3418,7 @@ test('/as uses Codex rewrite to merge natural-language edits into the matched as
           title: args.bridgeSession.title,
         };
       }
-      if (String(args.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(args.inputText ?? '').includes('"operation": "rewrite_record"')) {
+      if (normalizeCommandSkillInput(args.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(args.inputText).includes('"operation": "rewrite_record"')) {
         return {
           outputText: JSON.stringify({
             action: 'update',
@@ -3476,7 +3480,7 @@ test('/as uses Codex rewrite to merge natural-language edits into the matched as
     assert.match(draftText, new RegExp(`2\\. ${expectedTomorrow} UTC`));
     assert.doesNotMatch(draftText, /明天（周二）提交给业主/);
     assert.doesNotMatch(draftText, /这个东西要记一下/);
-    assert.equal(openai.startTurnCalls.some((call: any) => String(call.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(call.inputText ?? '').includes('"operation": "rewrite_record"')), true);
+    assert.equal(openai.startTurnCalls.some((call: any) => normalizeCommandSkillInput(call.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(call.inputText).includes('"operation": "rewrite_record"')), true);
 
     const unchanged = runtime.repositories.assistantRecords.list()[0];
     assert.match(unchanged?.content ?? '', /第二张单/);
@@ -3502,7 +3506,7 @@ test('/as natural language content update preserves the matched record status', 
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    const input = String(args.inputText ?? '');
+    const input = normalizeCommandSkillInput(args.inputText);
     if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "route_existing_record"')) {
       return {
         outputText: JSON.stringify({
@@ -3587,7 +3591,7 @@ test('/as ok promotes a pending target to active when confirming an update draft
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    const input = String(args.inputText ?? '');
+    const input = normalizeCommandSkillInput(args.inputText);
     if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "classify_new_record"')) {
       return {
         outputText: JSON.stringify({
@@ -3683,7 +3687,7 @@ test('/note content edits that contain archive-like words do not change record s
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    const input = String(args.inputText ?? '');
+    const input = normalizeCommandSkillInput(args.inputText);
     if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "classify_new_record"')) {
       return {
         outputText: JSON.stringify({
@@ -3790,7 +3794,7 @@ test('/as natural language can complete a matching assistant record after confir
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    const input = String(args.inputText ?? '');
+    const input = normalizeCommandSkillInput(args.inputText);
     if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "route_existing_record"')) {
       return {
         outputText: JSON.stringify({
@@ -3851,7 +3855,7 @@ test('/as natural language can cancel a matching assistant record after confirma
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    if (String(args.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(args.inputText ?? '').includes('"operation": "route_existing_record"')) {
+    if (normalizeCommandSkillInput(args.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(args.inputText).includes('"operation": "route_existing_record"')) {
       return {
         outputText: JSON.stringify({
           action: 'cancel',
@@ -3912,7 +3916,7 @@ test('/as natural language can archive a matching assistant record after confirm
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (args: any) => {
     openai.startTurnCalls.push(args);
-    if (String(args.inputText ?? '').includes('docs/command-skills/assistant-record.md') && String(args.inputText ?? '').includes('"operation": "route_existing_record"')) {
+    if (normalizeCommandSkillInput(args.inputText).includes('docs/command-skills/assistant-record.md') && normalizeCommandSkillInput(args.inputText).includes('"operation": "route_existing_record"')) {
       return {
         outputText: JSON.stringify({
           action: 'archive',
@@ -6126,7 +6130,7 @@ test('/review custom <instructions> targets the explicit custom review path with
     text: '/review custom 只审查测试目录里的改动',
   });
 
-  assert.equal(openai.startTurnCalls.some((call: any) => String(call.inputText ?? '').includes('docs/command-skills/review.md')), false);
+  assert.equal(openai.startTurnCalls.some((call: any) => normalizeCommandSkillInput(call.inputText).includes('docs/command-skills/review.md')), false);
   assert.equal(openai.startReviewCalls.length, 1);
   assert.deepEqual(openai.startReviewCalls[0]?.target, {
     type: 'custom',
@@ -6142,7 +6146,7 @@ test('/review natural language uses the review command skill and preserves struc
   });
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/review.md') && parserInput.includes('"command": "review"')) {
       assert.deepEqual(params?.event?.metadata?.codexbridge?.developerPromptContext, {
         mode: 'command-skill-parser',
@@ -6198,7 +6202,7 @@ test('/review natural language does not silently downgrade malformed skill targe
   });
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/review.md') && parserInput.includes('"command": "review"')) {
       return {
         outputText: JSON.stringify({
@@ -6242,7 +6246,7 @@ test('/review custom output follows locale and stays English when locale is en',
 
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/review.md') && parserInput.includes('"command": "review"')) {
       return {
         outputText: JSON.stringify({
@@ -6276,7 +6280,7 @@ test('/review custom output follows locale and stays English when locale is en',
     focus: ['状态流转'],
   });
   assert.equal(openai.startTurnCalls.some((call: any) =>
-    String(call.inputText ?? '').includes('CodexBridge review result localizer.'),
+    normalizeCommandSkillInput(call.inputText).includes('CodexBridge review result localizer.'),
   ), false);
   assert.match(result.messages[0]?.text ?? '', /Code review \| Custom target/);
   assert.match(result.messages[0]?.text ?? '', /openai review: custom/);
@@ -6288,7 +6292,7 @@ test('/review natural language can reject execution requests and avoids starting
   });
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/review.md') && parserInput.includes('"command": "review"')) {
       return {
         outputText: JSON.stringify({
@@ -6389,7 +6393,7 @@ test('/agent edit updates the pending agent draft instead of replacing it', asyn
     const { runtime, openai } = makeRuntime({ defaultCwd: '/repo' });
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (params: any) => {
-      const parserInput = String(params?.inputText ?? '');
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
       if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "natural"')) {
         assert.match(parserInput, /"command": "agent"/);
         return {
@@ -6475,7 +6479,7 @@ test('/agent edit honors command skill reject without falling back to draft edit
     const { runtime, openai } = makeRuntime({ defaultCwd: '/repo' });
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (params: any) => {
-      const parserInput = String(params?.inputText ?? '');
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
       if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "natural"')) {
         return {
           outputText: JSON.stringify({
@@ -6547,7 +6551,7 @@ test('/agent natural language list query uses the command skill instead of creat
     const { runtime, openai } = makeRuntime({ defaultCwd: '/repo' });
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (params: any) => {
-      const parserInput = String(params?.inputText ?? '');
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
       if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "natural"')) {
         if (parserInput.includes('看看现在有哪些 Agent 任务')) {
           return {
@@ -6619,7 +6623,7 @@ test('/agent natural language falls back locally after one unparseable command s
     let commandSkillTurns = 0;
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (params: any) => {
-      const parserInput = String(params?.inputText ?? '');
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
       if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "natural"')) {
         commandSkillTurns += 1;
         return {
@@ -6655,7 +6659,7 @@ test('/agent natural language proposes and confirms existing job management oper
     const { runtime, openai } = makeRuntime({ defaultCwd: '/repo' });
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (params: any) => {
-      const parserInput = String(params?.inputText ?? '');
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
       if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "natural"')) {
         if (parserInput.includes('"userInput": "写一份项目总结"')) {
           return {
@@ -6855,7 +6859,7 @@ test('/agent natural language rejects malformed update patch enums instead of si
     const { runtime, openai } = makeRuntime({ defaultCwd: '/repo' });
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (params: any) => {
-      const parserInput = String(params?.inputText ?? '');
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
       if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "natural"')) {
         if (parserInput.includes('"userInput": "写一份项目总结"')) {
           return {
@@ -6947,7 +6951,7 @@ test('/agent natural language can show, export, and resend existing job outputs'
     const { runtime, openai } = makeRuntime({ defaultCwd: tempDir });
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (params: any) => {
-      const parserInput = String(params?.inputText ?? '');
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
       if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "natural"')) {
         if (parserInput.includes('"userInput": "生成报告"')) {
           return {
@@ -9354,7 +9358,7 @@ test('/auto add natural language produces a draft through provider normalization
   });
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/auto.md')) {
       return {
         outputText: JSON.stringify({
@@ -9402,7 +9406,7 @@ test('/auto add natural language can create multiple daily schedules from one re
   });
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/auto.md')) {
       return {
         outputText: JSON.stringify({
@@ -9459,7 +9463,7 @@ test('/auto edit updates the pending automation draft instead of replacing it', 
   });
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/auto.md') && parserInput.includes('"subcommand": "add"')) {
       return {
         outputText: JSON.stringify({
@@ -9579,7 +9583,7 @@ test('/auto natural language proposes deleting a matching job before confirm', a
 
   const originalStartTurn = openai.startTurn.bind(openai);
   openai.startTurn = async (params: any) => {
-    const parserInput = String(params?.inputText ?? '');
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
     if (parserInput.includes('docs/command-skills/auto.md') && parserInput.includes('"subcommand": "natural"')) {
       assert.match(parserInput, /微博热搜前10条/);
       return {
