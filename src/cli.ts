@@ -3,6 +3,7 @@ import fsp from 'node:fs/promises';
 import { spawn, type ChildProcess } from 'node:child_process';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
+import QRCode from 'qrcode';
 import { WeixinAccountStore } from './platforms/weixin/account_store.js';
 import { WEIXIN_DEFAULT_BASE_URL, defaultCodexBridgeStateDir } from './platforms/weixin/config.js';
 import { WeixinPlatformPlugin } from './platforms/weixin/plugin.js';
@@ -337,19 +338,18 @@ async function materializeQrArtifact({ stateDir, qrcode, qrcodeImageContent }: {
   }
   if (typeof qrcodeImageContent === 'string' && /^https?:\/\//u.test(qrcodeImageContent)) {
     try {
-      const response = await fetch(qrcodeImageContent);
-      if (response.ok) {
-        const contentType = response.headers.get('content-type') ?? 'image/png';
-        const extension = mimeToExtension(contentType);
-        const filePath = path.join(outputDir, `${sanitizeFileSegment(qrcode)}.${extension}`);
-        const buffer = Buffer.from(await response.arrayBuffer());
-        await fsp.writeFile(filePath, buffer);
-        return { filePath, sourceUrl: qrcodeImageContent };
-      }
+      const filePath = path.join(outputDir, `${sanitizeFileSegment(qrcode)}.png`);
+      const buffer = await QRCode.toBuffer(qrcodeImageContent, {
+        type: 'png',
+        errorCorrectionLevel: 'M',
+        margin: 2,
+        width: 512,
+      });
+      await fsp.writeFile(filePath, buffer);
+      return { filePath, sourceUrl: qrcodeImageContent };
     } catch {
       return { filePath: null, sourceUrl: qrcodeImageContent };
     }
-    return { filePath: null, sourceUrl: qrcodeImageContent };
   }
   return { filePath: null, sourceUrl: null };
 }

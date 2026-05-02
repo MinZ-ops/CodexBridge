@@ -47,6 +47,23 @@ test('materializeQrArtifact stores data-url qr images on disk', async () => {
   assert.equal(result.sourceUrl, null);
 });
 
+test('materializeQrArtifact renders URL qr content into a real png', async () => {
+  const tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexbridge-cli-'));
+  const result = await materializeQrArtifact({
+    stateDir: tmpDir,
+    qrcode: 'qr-url-123',
+    qrcodeImageContent: 'https://liteapp.weixin.qq.com/q/?qrcode=abc&bot_type=3',
+  });
+
+  assert.ok(result.filePath);
+  assert.equal(fs.existsSync(result.filePath), true);
+  assert.equal(result.sourceUrl, 'https://liteapp.weixin.qq.com/q/?qrcode=abc&bot_type=3');
+  assert.deepEqual(
+    fs.readFileSync(result.filePath).subarray(0, 8),
+    Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]),
+  );
+});
+
 test('parseWeixinServeArgs reads state-dir flag', () => {
   const parsed = parseWeixinServeArgs([
     '--state-dir', '/tmp/codexbridge-state',
