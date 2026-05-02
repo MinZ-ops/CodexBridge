@@ -30,32 +30,31 @@ Important clarification:
   already exposes the current bound session and working-directory context well
   enough for now.
 
-## Current Priority: Expand Codex Native Capability
+## Current Priority: Make WeChat a Stable Codex Terminal
 
-The next phase should favor native Codex capability parity over adding more
-bridge-only slash-command glue.
+The next phase should prioritize day-to-day runtime reliability and native
+Codex output quality over adding more bridge-only command surface area.
 
-### P0: Native command surface parity
+### P0: WeChat runtime reliability
 
-- [ ] Decide whether native `/fork` needs a bridge command surface that is meaningfully different from current `/open`
 - [ ] Keep improving native approval, interrupted-turn, reconnect, and retry handling around long-running tasks
+- [ ] Stabilize WeChat preview/final delivery around send-budget limits, `ret:-2`, and long-reply recovery
+- [ ] Ensure plugin/auth/unavailable-capability failures always surface as clear chat-visible guidance instead of silent stalls
+- [ ] Keep parser/helper/internal bridge threads hidden from normal thread browsing and automatically cleaned up
+- [ ] Keep `/open`, `/threads`, and `/status` optimized for fast real-world session recovery instead of adding redundant resume-style commands
+
+### P1: Native output and delivery quality
+
 - [ ] Continue expanding provider-native artifact delivery instead of adding more bridge-only glue
 - [ ] Support more Codex-native output kinds with consistent attachment metadata and delivery policy
-- [ ] Improve model / usage / thread introspection where Codex already exposes reliable primitives
-
-### P1: Native background and execution environment parity
-
-- [ ] Add `codex cloud` task flows for submit/status/list/diff/apply so WeChat can act as a remote task inbox
-- [ ] Harden `/agent` with resumable execution logs, richer verifier policies, and optional OpenAI Agents SDK tracing
-- [ ] Introduce worktree-aware bridge session state instead of treating every thread as cwd-only
-- [ ] Map native worktree handoff concepts into bridge UX without breaking the existing thread binding model
-- [ ] Read project-local `.codex` environment metadata so shared local environment setup can inform bridge runs
-- [ ] Expose native multi-agent or subagent controls once the bridge can present them clearly in chat
 - [ ] Keep refining file delivery defaults so generated artifacts feel like first-class Codex outputs
+- [ ] Improve model / usage / thread introspection where Codex already exposes reliable primitives
+- [ ] Read project-local `.codex` environment metadata so shared local environment setup can inform bridge runs
+
+### P2: Assistant and desktop follow-through
+
+- [ ] Keep improving assistant-record, reminder, and automation delivery quality on WeChat
 - [ ] Add optional sync targets for assistant records, such as Notion, Google Drive, or Calendar, while keeping local records as source of truth
-
-### P2: Native desktop-only capability parity
-
 - [ ] Design a browser-preview workflow that approximates Codex app browser comments and browser-use results in chat
 - [ ] Design a companion-based computer-use workflow for desktop GUI tasks with explicit approvals and app allowlists
 - [ ] Decide whether these desktop-native abilities belong in CodexBridge itself or in a separate local companion service
