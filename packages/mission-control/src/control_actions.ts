@@ -10,6 +10,13 @@ const RESUMABLE_CONTROL_STATUS_SET = new Set<Mission['status']>([
   'failed',
 ]);
 
+const RETRY_REUSE_CONTEXT_STATUS_SET = new Set<Mission['status']>([
+  'waiting_user',
+  'needs_human',
+  'handoff',
+  'blocked',
+]);
+
 export interface CreateMissionRetrySnapshotOptions {
   at?: number;
   reason?: string | null;
@@ -94,6 +101,10 @@ export function createMissionResumeSnapshot(
     },
     updatedAt: at,
   };
+}
+
+export function shouldMissionRetryReuseAccumulatedContext(mission: Mission): boolean {
+  return RETRY_REUSE_CONTEXT_STATUS_SET.has(mission.status);
 }
 
 function normalizeText(value: string | null | undefined): string | null {

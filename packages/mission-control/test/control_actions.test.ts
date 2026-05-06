@@ -8,6 +8,7 @@ import {
   createMission,
   createMissionResumeSnapshot,
   createMissionRetrySnapshot,
+  shouldMissionRetryReuseAccumulatedContext,
   transitionMission,
 } from '../src/index.js';
 import type { MissionAttempt, MissionEvent } from '../src/index.js';
@@ -125,6 +126,46 @@ test('createMissionResumeSnapshot re-queues waiting missions without discarding 
   assert.equal(resumed.workpad.latestBlocker, null);
   assert.equal(resumed.workpad.latestVerifierSummary, null);
   assert.equal(resumed.workpad.finalResultSummary, 'partial context');
+});
+
+test('shouldMissionRetryReuseAccumulatedContext only preserves waiting-human continuation states', () => {
+  const draft = createMission({
+    id: 'mission-resume-policy-1',
+    source: 'manual',
+    platform: 'cli',
+    externalScopeId: 'resume-policy-1',
+    title: 'Resume policy',
+    goal: 'Decide whether retry should preserve runtime context.',
+    expectedOutput: 'A requeue policy verdict.',
+    providerProfileId: 'codex-default',
+    now: 1_701_000_150_000,
+  });
+  const queued = transitionMission(draft, 'queued', { at: 1_701_000_150_010 });
+  const waitingUser = transitionMission(queued, 'running', {
+    at: 1_701_000_150_020,
+    activeAttemptId: 'attempt-resume-policy-1',
+  });
+  const waiting = transitionMission(waitingUser, 'waiting_user', {
+    at: 1_701_000_150_030,
+    reason: 'Need the branch name.',
+  });
+  const blocked = transitionMission(waiting, 'queued', { at: 1_701_000_150_040 });
+  const blockedRunning = transitionMission(blocked, 'running', {
+    at: 1_701_000_150_050,
+    activeAttemptId: 'attempt-resume-policy-2',
+  });
+  const blockedMission = transitionMission(blockedRunning, 'blocked', {
+    at: 1_701_000_150_060,
+    reason: 'Need a missing secret.',
+  });
+  const failed = transitionMission(blockedMission, 'failed', {
+    at: 1_701_000_150_070,
+    reason: 'Budget exhausted.',
+  });
+
+  assert.equal(shouldMissionRetryReuseAccumulatedContext(waiting), true);
+  assert.equal(shouldMissionRetryReuseAccumulatedContext(blockedMission), true);
+  assert.equal(shouldMissionRetryReuseAccumulatedContext(failed), false);
 });
 
 test('json repository resetMission replaces the mission snapshot and clears attempts and events for that mission', () => {

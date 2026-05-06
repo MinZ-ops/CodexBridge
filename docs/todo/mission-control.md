@@ -437,6 +437,7 @@ Phase 6 source-of-truth tests:
 - `packages/mission-control/test/control_actions.test.ts`
   - `createMissionRetrySnapshot clears runtime history but preserves stable mission context`
   - `createMissionResumeSnapshot re-queues waiting missions without discarding accumulated context`
+  - `shouldMissionRetryReuseAccumulatedContext only preserves waiting-human continuation states`
   - `json repository resetMission replaces the mission snapshot and clears attempts and events for that mission`
 - `test/core/bridge_coordinator.test.ts`
   - `/agent drafts, confirms, runs, verifies, and records a background job`
@@ -448,6 +449,9 @@ Phase 6 source-of-truth tests:
   - `/agent runAgentJob loads WORKFLOW.md and routes it into the mission-controlled execution prompt`
   - `/agent runAgentJob forwards provider approval requests to the supplied approval callback`
   - `/auto scheduled runs delegate into Mission Control and persist automation mission state`
+- `test/core/agent_job_service.test.ts`
+  - `AgentJobService retryJob preserves Mission Control runtime history when re-queueing waiting-human missions`
+  - `AgentJobService retryJob still clears runtime history for fresh reruns`
 - `test/core/mission_control_automation_job_runner.test.ts`
   - `automation mission runner persists rebound bridge sessions across continuation turns`
 - `test/runtime/weixin_bridge_runtime.test.ts`
@@ -462,6 +466,17 @@ verified CodexBridge integration state so that:
   `/auto` already delegate into the same Mission Control runtime
 - checklist items backed by Mission Control package tests, bridge integration
   tests, and the package boundary check are marked complete
+
+Phase 6f landed: waiting-human continuation retries now reuse package-owned
+resume semantics so that:
+
+- `/agent retry` preserves attempts, events, and workpad context for
+  `waiting_user`, `needs_human`, `handoff`, and `blocked` missions instead of
+  clearing them like a fresh rerun
+- the existing `/agent retry` surface continues to serve as Mission v0 requeue
+  control without introducing a separate `/agent resume` command yet
+- completed or failed reruns still reset through package retry snapshots, so a
+  deliberate fresh rerun keeps bounded clean-state behavior
 
 ## Phase 7: Optional Web Surface
 

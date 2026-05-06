@@ -1,9 +1,12 @@
 import crypto from 'node:crypto';
+import { shouldMissionRetryReuseAccumulatedContext } from '../../packages/mission-control/src/index.js';
 import { NotFoundError } from './errors.js';
 import {
   createMissionControlledAgentJobView,
+  createResumedMissionRuntimeStateForAgentJob,
   createRetriedMissionRuntimeStateForAgentJob,
   createStoppedMissionRuntimeStateForAgentJob,
+  loadAgentJobMissionRuntimeState,
   serializeAgentJobMissionRuntimeState,
 } from './mission_control_agent_job_adapter.js';
 import { createI18n, type Translator } from '../i18n/index.js';
@@ -192,6 +195,35 @@ export class AgentJobService {
 
   retryJob(id: string): AgentJob {
     const current = this.requireById(id);
+    const effectiveJob = createMissionControlledAgentJobView(current);
+    const runtimeState = loadAgentJobMissionRuntimeState(current);
+    if (runtimeState.mission && shouldMissionRetryReuseAccumulatedContext(runtimeState.mission)) {
+      const mission = runtimeState.mission;
+      const resumedState = createResumedMissionRuntimeStateForAgentJob(current, {
+        reason: 'Agent mission queued to continue after human input.',
+        now: this.now(),
+      });
+      if (resumedState) {
+        return this.updateJob(id, {
+          status: 'queued',
+          running: false,
+          stopRequested: false,
+          attemptCount: mission.attemptCount,
+          lastRunAt: mission.lastRunAt,
+          completedAt: null,
+          lastResultPreview: mission.lastResultPreview,
+          resultText: mission.resultText,
+          resultArtifacts: effectiveJob.resultArtifacts ?? null,
+          lastError: null,
+          verificationSummary: null,
+          missionWorkpadLatestBlocker: null,
+          missionWorkpadLatestVerifierSummary: null,
+          missionWorkpadFinalResultSummary: mission.workpad.finalResultSummary,
+          missionAttemptHistory: effectiveJob.missionAttemptHistory,
+          missionRuntimeState: serializeAgentJobMissionRuntimeState(resumedState),
+        });
+      }
+    }
     const resetState = createRetriedMissionRuntimeStateForAgentJob(current, {
       now: this.now(),
       codexThreadId: this.getSession(current)?.codexThreadId ?? null,
@@ -201,7 +233,9 @@ export class AgentJobService {
       running: false,
       stopRequested: false,
       attemptCount: 0,
+      lastRunAt: null,
       completedAt: null,
+      lastResultPreview: null,
       lastError: null,
       resultText: null,
       resultArtifacts: null,

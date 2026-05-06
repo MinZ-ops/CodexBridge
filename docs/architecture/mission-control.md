@@ -252,7 +252,7 @@ In other words:
 
 ## Current CodexBridge Mapping
 
-Existing pieces already cover part of Mission Control:
+Current code already has a real Mission Control package/runtime boundary:
 
 - `/agent`: manual background job creation, confirmation, full-access run,
   verification, retry, stop, rename, delete, export, and send.
@@ -262,12 +262,20 @@ Existing pieces already cover part of Mission Control:
   runtime diagnosis.
 - `TurnArtifactDeliveryState`: provider-native and bridge-declared artifact
   handoff.
-- `AgentJob`: current persisted unit for background agent work.
+- `packages/mission-control`: durable mission domain, workflow loader, workpad,
+  workspace/lease coordination, provider port, verifier loop, and control
+  helpers.
+- `AgentJob` / `AutomationJob`: current bridge-side compatibility records that
+  now project Mission Control state back onto the existing `/agent` and `/auto`
+  surfaces.
 
-Main missing abstraction:
+Main remaining integration gap:
 
-- There is no unified `Mission` model that can represent manual agent jobs,
-  scheduled automation runs, tracker issues, and future desktop/browser tasks.
+- The unified `Mission` model now exists inside
+  `@codexbridge/mission-control`.
+- The next hardening work is keeping host-side control actions thin and
+  reusable, so future Telegram, CLI, or web surfaces can stop/retry/resume the
+  same mission records without re-implementing bridge-local runtime logic.
 
 ## V0 Migration Baseline Sources
 
@@ -806,6 +814,10 @@ should not own mission state.
 
 ## Implementation Plan
 
+Live phase/checklist status belongs to `docs/todo/mission-control.md`.
+The architecture phases below should stay aligned with the implemented package
+state instead of acting as a second stale TODO list.
+
 ### Phase 0: Baseline current `/agent` and `/auto` behavior
 
 - Treat current `/agent` and `/auto` user-visible behavior as migration
@@ -849,26 +861,31 @@ should not own mission state.
 - Add runner lease/lock records so restart recovery and concurrency are safe.
 - Persist `workspacePath` and environment stamp.
 
-### Phase 4: Add Codex provider and bounded run / verify / repair loop
+### Phase 4: Codex provider adapter
 
-- Replace one-shot `/agent` execution with a loop:
-  - run
-  - verify
-  - repair if needed
-  - block / fail / complete
-- Persist attempt and verifier state after every step.
-- Ensure restart recovery can resume queued/running/verifying missions safely.
+- Add the provider port and `CodexMissionProvider` as the first real provider.
+- Persist provider run/thread identity at the attempt layer.
+- Treat normal provider exit as eligible for bounded continuation when mission
+  state and budget still allow more work.
 
-### Phase 5: Add control adapters and external sources
+### Phase 5: Verification loop
+
+- Replace one-shot `/agent` execution with a bounded run / verify / repair
+  loop.
+- Persist verifier summaries, missing acceptance criteria, and retry-budget
+  failures after every step.
+- Make verifier verdicts, not provider `completed`, the completion authority.
+
+### Phase 6: CodexBridge integration
 
 - Keep CodexBridge WeChat as the first control and notification surface.
-- Add a clean integration path for `/auto` and future Telegram reuse.
-- Keep the runtime host-agnostic so other surfaces can embed it without
-  changing mission core behavior.
-- GitHub issues first if GitHub auth is available.
-- Linear second, because Symphony already proves the shape.
-- Only after chat control is solid, add a read/write web control plane against
-  the same persisted mission state.
+- Make `/agent` and scheduled `/auto` delegate into the same Mission Control
+  runtime without introducing a separate `/mission` surface yet.
+- Keep bridge-owned delivery, approval wording, and session-binding concerns on
+  the host side.
+- Reuse package-owned retry/resume semantics so waiting-human / handoff
+  continuations preserve accumulated mission context instead of always resetting
+  into a fresh rerun.
 
 ## Guardrails
 
@@ -882,15 +899,15 @@ should not own mission state.
 
 ## Practical Next Step
 
-The immediate useful next step is not copying Symphony's Elixir code. It is:
+The immediate useful next step is to keep hardening the Mission Control package
+boundary, not to jump to later providers or a web UI.
 
-1. Keep `reference/symphony` as architecture reference.
-2. Add workflow loading around `/agent`.
-3. Add workpad fields to `AgentJob`.
-4. Make `/agent show` present the workpad.
-5. Make `/agent retry` reuse the workpad and workspace context.
-6. Add `packages/mission-control` as the internal runtime boundary before
-   attempting a broader npm extraction.
+Current focus:
 
-That gives Mission Control a real Codex-first runtime while keeping CodexBridge
-as the primary initial control surface.
+1. Keep `packages/mission-control` as the single owner of mission state,
+   workflow policy, verifier authority, and retry/resume semantics.
+2. Keep bridge integrations thin so `/agent` and `/auto` stay Mission v0
+   surfaces instead of becoming the runtime owner again.
+3. Improve future-host readiness through package-owned control helpers and
+   adapter seams, while deferring GitHub/Linear sources, optional web UI, and
+   later providers.
