@@ -45,8 +45,10 @@ track/codex-gateway
 Expected file ownership for this branch:
 
 - `packages/codex-gateway/**`
+- `src/providers/codex/config.ts`
 - `src/providers/openai_compatible/**`
 - `src/providers/shared/thinking_policy.ts`
+- `test/providers/codex/config.test.ts`
 - `test/providers/openai_compatible/**`
 - `reference/codex-gateway/**`
 - `docs/architecture/codexbridge-core-architecture.md`
@@ -70,6 +72,7 @@ Latest progress:
 - [x] Preset-backed provider profile exposure now iterates `OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS` instead of hardcoded per-provider `pushProfile(...)` calls in `src/providers/codex/config.ts`
 - [x] Qwen/DashScope env alias handling is covered by dedicated config tests so compatible-provider onboarding stays registration-driven
 - [x] `CODEX_COMPAT_PROFILES_JSON` can now declare multiple custom OpenAI-compatible provider profiles without adding new provider/plugin classes
+- [x] `CODEX_COMPAT_PROFILES_PATH` now supports file-based custom compatible provider lists, with inline JSON taking precedence for duplicate IDs
 - [x] Custom compatible profile JSON ignores invalid entries while preserving existing built-in preset, single-profile, and legacy config paths
 
 ## Packaging Direction

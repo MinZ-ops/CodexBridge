@@ -415,7 +415,7 @@ Preset-backed compatible provider exposure should stay registration-driven:
 - package preset metadata lives in `packages/codex-gateway/src/capabilities/capability_presets.ts`
 - `OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS` is the source of truth for built-in compatible profile exposure
 - `src/providers/codex/config.ts` should iterate that registration data instead of hardcoding one-off provider branches
-- additional arbitrary compatible providers may be declared through `CODEX_COMPAT_PROFILES_JSON` so provider onboarding can stay config-first even outside the built-in preset list
+- additional arbitrary compatible providers may be declared through `CODEX_COMPAT_PROFILES_JSON` or `CODEX_COMPAT_PROFILES_PATH` so provider onboarding can stay config-first even outside the built-in preset list
 
 CodexBridge keeps all bridge/runtime behavior:
 

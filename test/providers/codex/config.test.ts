@@ -78,6 +78,58 @@ test('loadCodexProfilesFromEnv ignores invalid JSON-defined compatible providers
   assert.equal(result.profiles.some((entry) => entry.id === 'missing-model'), false);
 });
 
+test('loadCodexProfilesFromEnv exposes JSON-defined compatible providers from a file path', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexbridge-compat-profiles-'));
+  const profilePath = path.join(tempDir, 'compat-profiles.json');
+  fs.writeFileSync(profilePath, JSON.stringify([{
+    id: 'grok',
+    displayName: 'Grok',
+    apiKeyEnv: 'XAI_API_KEY',
+    baseUrl: 'https://api.x.ai/v1',
+    defaultModel: 'grok-code-fast-1',
+    capabilityPreset: 'default',
+  }]));
+
+  const result = loadCodexProfilesFromEnv({
+    CODEX_REAL_BIN: '/usr/bin/codex',
+    CODEX_COMPAT_PROFILES_PATH: profilePath,
+  });
+
+  const grok = result.profiles.find((entry) => entry.id === 'grok');
+  assert.equal(grok?.providerKind, 'openai-compatible');
+  assert.equal(grok?.displayName, 'Grok');
+  assert.equal(grok?.config.apiKeyEnv, 'XAI_API_KEY');
+  assert.equal(grok?.config.baseUrl, 'https://api.x.ai/v1');
+  assert.equal(grok?.config.defaultModel, 'grok-code-fast-1');
+});
+
+test('loadCodexProfilesFromEnv prefers inline JSON-defined compatible providers over file duplicates', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codexbridge-compat-precedence-'));
+  const profilePath = path.join(tempDir, 'compat-profiles.json');
+  fs.writeFileSync(profilePath, JSON.stringify([{
+    id: 'groq',
+    displayName: 'Groq File',
+    baseUrl: 'https://file.example/v1',
+    defaultModel: 'file-model',
+  }]));
+
+  const result = loadCodexProfilesFromEnv({
+    CODEX_REAL_BIN: '/usr/bin/codex',
+    CODEX_COMPAT_PROFILES_JSON: JSON.stringify([{
+      id: 'groq',
+      displayName: 'Groq Inline',
+      baseUrl: 'https://inline.example/v1',
+      defaultModel: 'inline-model',
+    }]),
+    CODEX_COMPAT_PROFILES_PATH: profilePath,
+  });
+
+  const groq = result.profiles.find((entry) => entry.id === 'groq');
+  assert.equal(groq?.displayName, 'Groq Inline');
+  assert.equal(groq?.config.baseUrl, 'https://inline.example/v1');
+  assert.equal(groq?.config.defaultModel, 'inline-model');
+});
+
 test('loadCodexProfilesFromEnv exposes DeepSeek through the generic OpenAI-compatible profile loader', () => {
   const result = loadCodexProfilesFromEnv({
     CODEX_REAL_BIN: '/usr/bin/codex',

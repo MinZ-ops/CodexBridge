@@ -121,6 +121,7 @@ export function loadCodexProfilesFromEnv(
     env,
     codexRealBin,
     now,
+    cwd,
   })) {
     pushProfile(profiles, profile);
   }
@@ -340,12 +341,15 @@ function buildCustomOpenAICompatibleProfiles({
   env,
   codexRealBin,
   now,
+  cwd = process.cwd(),
 }: {
   env: NodeJS.ProcessEnv;
   codexRealBin: string;
   now: number;
+  cwd?: string;
 }): CodexProviderProfile[] {
   return parseCustomOpenAICompatibleProfileConfigs(env.CODEX_COMPAT_PROFILES_JSON)
+    .concat(parseCustomOpenAICompatibleProfileConfigsFromPath(env.CODEX_COMPAT_PROFILES_PATH, cwd))
     .map((rawProfile) => buildCustomOpenAICompatibleProfileFromConfig({
       rawProfile,
       env,
@@ -538,8 +542,31 @@ function parseCustomOpenAICompatibleProfileConfigs(value: unknown): CustomOpenAI
   if (!normalized) {
     return [];
   }
+  return parseCustomOpenAICompatibleProfileConfigsRaw(normalized);
+}
+
+function parseCustomOpenAICompatibleProfileConfigsFromPath(
+  value: unknown,
+  cwd: string,
+): CustomOpenAICompatibleProfileConfig[] {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return [];
+  }
   try {
-    const parsed = JSON.parse(normalized);
+    const resolvedPath = path.resolve(cwd, normalized);
+    if (!fs.existsSync(resolvedPath)) {
+      return [];
+    }
+    return parseCustomOpenAICompatibleProfileConfigsRaw(fs.readFileSync(resolvedPath, 'utf8'));
+  } catch {
+    return [];
+  }
+}
+
+function parseCustomOpenAICompatibleProfileConfigsRaw(text: string): CustomOpenAICompatibleProfileConfig[] {
+  try {
+    const parsed = JSON.parse(text);
     return Array.isArray(parsed)
       ? parsed.filter((entry): entry is CustomOpenAICompatibleProfileConfig => Boolean(entry) && typeof entry === 'object')
       : [];
