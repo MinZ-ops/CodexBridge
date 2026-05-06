@@ -13,7 +13,7 @@ import {
 import type { MissionAttempt, MissionEvent } from '../src/index.js';
 
 test('mission control package exposes the phase-1 domain and persistence surface', () => {
-  assert.equal(MISSION_CONTROL_PACKAGE_PHASE, 'phase-2-workflow-workpad-foundations');
+  assert.equal(MISSION_CONTROL_PACKAGE_PHASE, 'phase-3-workspace-lease-foundations');
 });
 
 test('mission state transitions are explicit and reject invalid transitions', () => {

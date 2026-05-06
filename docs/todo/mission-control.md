@@ -262,21 +262,29 @@ Phase 2 source-of-truth tests:
 
 ## Phase 3: Workspace and Lease Management
 
-- [ ] Add `MissionWorkspaceService`
-- [ ] Create default directory layout under `~/.codexbridge/mission/`
-- [ ] Add code-changing mission isolation under
+- [x] Add `MissionWorkspaceService`
+- [x] Create default directory layout under `~/.codexbridge/mission/`
+- [x] Add code-changing mission isolation under
   `~/.codexbridge/mission/workspaces/<missionId>/`
-- [ ] Make workspace identity deterministic per mission so retries and
+- [x] Make workspace identity deterministic per mission so retries and
   continuation reuse the same execution context safely
-- [ ] Allow safe reuse of bound cwd for read-only missions
-- [ ] Add runner lease records to prevent duplicate workers
-- [ ] Add stale-lease recovery
+- [x] Allow safe reuse of bound cwd for read-only missions
+- [x] Add runner lease records to prevent duplicate workers
+- [x] Add stale-lease recovery
 
 Completion criteria:
 
-- [ ] Concurrent mission limit is enforced
-- [ ] One mission cannot accidentally resume inside another mission workspace
-- [ ] Restarting the bridge does not create duplicate active runners
+- [x] Concurrent mission limit is enforced
+- [x] One mission cannot accidentally resume inside another mission workspace
+- [x] Restarting the bridge does not create duplicate active runners
+
+Phase 3 source-of-truth tests:
+
+- `packages/mission-control/test/workspace_and_lease.test.ts`
+  - `workspace service creates deterministic isolated mission workspaces and default layout`
+  - `workspace service can reuse bound cwd for explicit read-only missions`
+  - `lease coordinator enforces concurrent limits, conflict checks, and heartbeat updates`
+  - `stale lease recovery re-queues running missions, preserves verifier states, and supports restart-safe reclaim`
 
 ## Phase 4: Codex Provider Adapter
 

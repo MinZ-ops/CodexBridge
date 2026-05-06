@@ -1,6 +1,6 @@
 export const MISSION_CONTROL_PACKAGE_NAME = '@codexbridge/mission-control' as const;
 
-export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-2-workflow-workpad-foundations' as const;
+export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-3-workspace-lease-foundations' as const;
 
 export const MISSION_CONTROL_OWNS = [
   'mission-domain-model',
@@ -42,3 +42,5 @@ export * from './json_file_mission_repository.js';
 export * from './workflow.js';
 export * from './prompt_contract.js';
 export * from './workpad_view.js';
+export * from './workspace.js';
+export * from './lease_coordinator.js';

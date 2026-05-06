@@ -31,9 +31,10 @@ It must not own bridge behavior:
 
 Current phase:
 
-- `phase-2-workflow-workpad-foundations`: package boundary plus durable mission
+- `phase-3-workspace-lease-foundations`: package boundary plus durable mission
   domain, repository-backed persistence, typed workflow loading, canonical
-  attempt prompt contract, and workpad status rendering helpers
+  attempt prompt contract, workpad status rendering helpers, deterministic
+  workspace assignment, and recovery-safe lease coordination
 
 This package should preserve the Symphony-style separation between:
 
