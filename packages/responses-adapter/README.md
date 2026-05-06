@@ -42,3 +42,26 @@ old CodexBridge paths still exist as re-export shims during migration:
 CodexBridge now keeps only the OpenAI-compatible provider integration wrapper in
 `src/providers/openai_compatible/plugin.ts`; package code still must not import
 from CodexBridge core/platform/runtime/store/i18n.
+
+## Validation
+
+Package-level checks:
+
+```bash
+pnpm run responses-adapter:check-boundary
+pnpm run responses-adapter:typecheck
+pnpm run responses-adapter:test
+pnpm run responses-adapter:build
+```
+
+Live OpenAI-compatible provider smoke tests are gated and must run through the
+CodexBridge provider profile loader:
+
+```bash
+pnpm run test:live-openai-compatible
+CODEXBRIDGE_TEST_ENV_FILE=/path/to/codexbridge.env pnpm run test:live-openai-compatible
+```
+
+The live test runner does not print API key values. It skips providers whose
+profile env is missing, and verifies available provider profiles through the
+local `/v1/responses` adapter server.

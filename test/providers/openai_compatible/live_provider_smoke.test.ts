@@ -72,8 +72,9 @@ for (const provider of PROVIDERS) {
         },
         body: JSON.stringify({
           model: resolved.model,
-          input: 'Reply with exactly: OK',
-          max_output_tokens: 16,
+          instructions: 'Return only the final answer. Do not explain.',
+          input: 'Final answer must be exactly: OK',
+          max_output_tokens: 128,
           stream: false,
         }),
         signal: AbortSignal.timeout(70_000),

@@ -223,7 +223,9 @@ Phase 4 package contract suite:
 - [x] Refactored live-provider smoke tests to load the real CodexBridge provider profiles via `loadCodexProfilesFromEnv()` before starting the local Responses adapter server
 - [x] Added `pnpm run test:live-openai-compatible` as the explicit gated live smoke entrypoint
 - [x] Profile-based live smoke harness verification run on 2026-05-06: default test path skips safely; gated path also skips when current shell has no DeepSeek, MiniMax, Qwen/DashScope, or OpenRouter profile env
-- [ ] Phase 4 live provider smoke tests through real CodexBridge profiles remain pending after package checks pass
+- [x] Added `CODEXBRIDGE_TEST_ENV_FILE` support to the test runner so gated live tests can load a service env file without printing secrets
+- [x] Live profile smoke run on 2026-05-06 with `/home/ubuntu/.config/codexbridge/weixin.service.env`: DeepSeek and MiniMax passed through real CodexBridge profiles
+- [ ] Phase 4 live provider smoke remains pending for Qwen/DashScope and OpenRouter until credentials are available
 
 Reference usage:
 

@@ -7,6 +7,7 @@ fs.rmSync(distTestDir, { recursive: true, force: true });
 
 const LIVE_AGENT_TEST_ENV_FLAG = 'CODEXBRIDGE_TEST_ALLOW_LIVE_AGENT';
 const LIVE_OPENAI_COMPATIBLE_TEST_ENV_FLAG = 'CODEXBRIDGE_TEST_LIVE_OPENAI_COMPATIBLE';
+loadOptionalEnvFile(process.env.CODEXBRIDGE_TEST_ENV_FILE);
 const isolatedEnv = { ...process.env };
 const allowLiveAgent = isolatedEnv[LIVE_AGENT_TEST_ENV_FLAG] === '1';
 const allowLiveOpenAICompatible = isolatedEnv[LIVE_OPENAI_COMPATIBLE_TEST_ENV_FLAG] === '1';
@@ -84,3 +85,36 @@ if (typeof result.status === 'number') {
 }
 
 process.exit(1);
+
+function loadOptionalEnvFile(filePath) {
+  if (!filePath) {
+    return;
+  }
+  const resolvedPath = path.resolve(String(filePath));
+  if (!fs.existsSync(resolvedPath)) {
+    throw new Error(`CODEXBRIDGE_TEST_ENV_FILE does not exist: ${resolvedPath}`);
+  }
+  const content = fs.readFileSync(resolvedPath, 'utf8');
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+    const index = line.indexOf('=');
+    if (index <= 0) {
+      continue;
+    }
+    const key = line.slice(0, index).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+      continue;
+    }
+    let value = line.slice(index + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"'))
+      || (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    process.env[key] = value;
+  }
+}

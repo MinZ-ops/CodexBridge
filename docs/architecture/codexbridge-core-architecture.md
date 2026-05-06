@@ -446,6 +446,7 @@ Extraction dependency rules:
 - CodexBridge provider code may import package APIs, but package code must never import CodexBridge provider code
 - live-provider smoke tests stay in CodexBridge until the adapter package has a stable fixture-based contract suite
 - live-provider smoke tests must load real CodexBridge provider profiles through `loadCodexProfilesFromEnv()` before starting the local adapter server; hand-written provider specs are not enough to validate bridge profile wiring
+- live-provider smoke tests may use `CODEXBRIDGE_TEST_ENV_FILE` to load a service env file, but test output must never print API key values
 - the package should not expose account, auth-pool, proxy-rotation, or OAuth concepts until those become a separate deployment package
 
 Deferred architecture:
