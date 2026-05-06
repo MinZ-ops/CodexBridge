@@ -6,7 +6,9 @@ import {
   type CliproxyModelCategory,
 } from './cliproxy_model_catalog.js';
 import {
+  getProviderThinkingSupport,
   mergeOpenAICompatibleProviderCapabilities,
+  resolveOpenAICompatibleProviderCapabilitiesForModel,
   type OpenAICompatibleModelCapabilities,
   type OpenAICompatibleProviderCapabilities,
 } from './thinking_policy.js';
@@ -48,6 +50,34 @@ export interface OpenAICompatibleProfilePresetRegistration {
   alternativeApiKeyEnv?: string | null;
   alternativeBaseUrlEnv?: string | null;
   alternativeModelEnv?: string | null;
+}
+
+export interface OpenAICompatibleCapabilityCatalogMetadata {
+  toolCalling: {
+    supported: boolean;
+    parallel: boolean | null;
+    builtinWebSearch: boolean | null;
+  };
+  inputModalities: {
+    image: boolean | null;
+    file: boolean | null;
+    pdf: boolean | null;
+  };
+  structuredOutput: {
+    jsonSchema: boolean | null;
+  };
+  reasoning: {
+    supported: boolean;
+    supportedReasoningEfforts: string[];
+    defaultReasoningEffort: string | null;
+  };
+  responses: {
+    compact: boolean | null;
+  };
+  limits: {
+    maxOutputTokens: number | null;
+  };
+  quirks: string[];
 }
 
 const OPENAI_COMPATIBLE_DEFAULT_CAPABILITIES: OpenAICompatibleProviderCapabilities = {
@@ -313,6 +343,12 @@ export function buildOpenAICompatibleModelCatalog({
       supportedReasoningEfforts: reasoning?.supportedReasoningEfforts ?? [],
       defaultReasoningEffort: reasoning?.defaultReasoningEffort ?? null,
       capabilities: modelCapabilities,
+      capabilityCatalog: buildOpenAICompatibleCapabilityCatalogMetadata({
+        modelId: id,
+        providerKind: 'openai-compatible',
+        providerCapabilities: capabilities,
+        modelCapabilities,
+      }),
       ...buildNormalizedModelCatalogMetadata(cliproxyEntry),
     };
   });
@@ -379,6 +415,12 @@ export function buildOpenAICompatibleExternalModelCatalog({
         || reasoning?.defaultReasoningEffort
         || null,
       capabilities: capabilitiesForModel,
+      capabilityCatalog: buildOpenAICompatibleCapabilityCatalogMetadata({
+        modelId: id,
+        providerKind: 'openai-compatible',
+        providerCapabilities: capabilities,
+        modelCapabilities: capabilitiesForModel,
+      }),
       ...buildNormalizedModelCatalogMetadata(rawEntry),
     });
   }
@@ -472,6 +514,7 @@ function buildCapabilitiesFromExternalModelEntry(entry: Record<string, any>): Op
     tools: hasSupportedParameters ? supportedParameters.includes('tools') : !isExternalNonChatModel(id),
     vision: inferExternalVisionSupport(id, category, entry),
     fileInput: false,
+    pdfInput: false,
     jsonSchema: !hasSupportedParameters || supportedParameters.includes('response_format'),
     reasoning: reasoningLevels.length > 0
       ? {
@@ -498,6 +541,77 @@ function buildCapabilitiesFromExternalModelEntry(entry: Record<string, any>): Op
     webSearch: false,
     parallelToolCalls: !id.startsWith('minimax'),
     maxOutputTokens: maxOutputTokens ?? undefined,
+  };
+}
+
+export function buildOpenAICompatibleCapabilityCatalogMetadata({
+  modelId,
+  providerKind,
+  providerCapabilities,
+  modelCapabilities,
+}: {
+  modelId: string;
+  providerKind: string | null | undefined;
+  providerCapabilities: OpenAICompatibleProviderCapabilities | null;
+  modelCapabilities?: OpenAICompatibleModelCapabilities | null;
+}): OpenAICompatibleCapabilityCatalogMetadata {
+  const normalizedModelId = normalizeString(modelId);
+  const effectiveCapabilities = resolveOpenAICompatibleProviderCapabilitiesForModel(
+    modelCapabilities
+      ? {
+        ...(providerCapabilities ?? {}),
+        modelCapabilities: {
+          ...(providerCapabilities?.modelCapabilities ?? {}),
+          [normalizedModelId]: modelCapabilities,
+        },
+      }
+      : providerCapabilities,
+    normalizedModelId,
+  );
+  const reasoning = getProviderThinkingSupport(providerKind, effectiveCapabilities);
+  const multimodal = effectiveCapabilities?.multimodal ?? null;
+  const fileSupport = normalizeNullableBoolean(multimodal?.supportsFileInput);
+  const pdfSupport = normalizeNullableBoolean(multimodal?.supportsPdfInput) ?? (fileSupport === false ? false : null);
+  const quirks = unique([
+    ...(payloadBlocksPath(effectiveCapabilities?.payload, 'parallel_tool_calls') ? ['parallel_tool_calls_filtered'] : []),
+    ...(payloadBlocksPath(effectiveCapabilities?.payload, 'response_format') ? ['json_schema_filtered'] : []),
+    ...(hasPayloadModelOverride(effectiveCapabilities?.payload, normalizedModelId) ? ['upstream_model_alias_required'] : []),
+    ...(effectiveCapabilities?.thinking?.mode === 'boolean' && normalizeString(effectiveCapabilities.thinking.booleanField)
+      ? ['provider_specific_thinking_toggle']
+      : []),
+    ...normalizeUnsupportedInputQuirk(multimodal?.unsupportedInputPartStrategy),
+  ]);
+
+  return {
+    toolCalling: {
+      supported: effectiveCapabilities?.supportsTools !== false,
+      parallel: typeof modelCapabilities?.parallelToolCalls === 'boolean'
+        ? modelCapabilities.parallelToolCalls
+        : !payloadBlocksPath(effectiveCapabilities?.payload, 'parallel_tool_calls'),
+      builtinWebSearch: effectiveCapabilities?.supportsBuiltinWebSearchTool ?? null,
+    },
+    inputModalities: {
+      image: normalizeNullableBoolean(multimodal?.supportsImageInput),
+      file: fileSupport,
+      pdf: pdfSupport,
+    },
+    structuredOutput: {
+      jsonSchema: typeof modelCapabilities?.jsonSchema === 'boolean'
+        ? modelCapabilities.jsonSchema
+        : !payloadBlocksPath(effectiveCapabilities?.payload, 'response_format'),
+    },
+    reasoning: {
+      supported: reasoning.supportedReasoningEfforts.length > 0,
+      supportedReasoningEfforts: reasoning.supportedReasoningEfforts,
+      defaultReasoningEffort: reasoning.defaultReasoningEffort,
+    },
+    responses: {
+      compact: effectiveCapabilities?.supportsResponsesCompact ?? null,
+    },
+    limits: {
+      maxOutputTokens: normalizePositiveNumber(modelCapabilities?.maxOutputTokens),
+    },
+    quirks,
   };
 }
 
@@ -550,6 +664,49 @@ function normalizePricingMetadata(entry: Record<string, any>): Record<string, un
       ?? undefined,
   });
   return Object.keys(pricing).length > 0 ? pricing : undefined;
+}
+
+function payloadBlocksPath(
+  payload: OpenAICompatibleProviderCapabilities['payload'] | null | undefined,
+  path: string,
+): boolean {
+  const normalizedPath = normalizeString(path);
+  if (!normalizedPath) {
+    return false;
+  }
+  return Boolean(payload?.filter?.some((rule) => (
+    Array.isArray(rule?.paths)
+    && rule.paths.some((entry) => normalizeString(entry) === normalizedPath)
+  )));
+}
+
+function hasPayloadModelOverride(
+  payload: OpenAICompatibleProviderCapabilities['payload'] | null | undefined,
+  modelId: string,
+): boolean {
+  const normalizedModelId = normalizeString(modelId);
+  if (!normalizedModelId) {
+    return false;
+  }
+  return Boolean(payload?.override?.some((rule) => {
+    const overrideModel = normalizeString((rule?.params as Record<string, unknown> | undefined)?.model);
+    return Boolean(overrideModel) && overrideModel !== normalizedModelId;
+  }));
+}
+
+function normalizeUnsupportedInputQuirk(
+  strategy: 'drop' | 'text-placeholder' | 'error' | undefined,
+): string[] {
+  switch (strategy) {
+    case 'drop':
+      return ['drop_unsupported_input_parts'];
+    case 'text-placeholder':
+      return ['text_placeholder_for_unsupported_input_parts'];
+    case 'error':
+      return ['error_on_unsupported_input_parts'];
+    default:
+      return [];
+  }
 }
 
 function normalizePricingObject(value: unknown): Record<string, unknown> | undefined {
@@ -616,6 +773,14 @@ function normalizePositiveNumber(value: unknown): number | null {
 function normalizePositiveOrZeroNumber(value: unknown): number | null {
   const number = Number(value);
   return Number.isFinite(number) && number >= 0 ? number : null;
+}
+
+function normalizeNullableBoolean(value: unknown): boolean | null {
+  return typeof value === 'boolean' ? value : null;
+}
+
+function unique(values: string[]): string[] {
+  return [...new Set(values.map((value) => normalizeString(value)).filter(Boolean))];
 }
 
 function omitUndefined<T extends Record<string, unknown>>(value: T): T {

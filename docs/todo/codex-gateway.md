@@ -88,6 +88,7 @@ Latest progress:
 - [x] LiteLLM-style usage aliases such as cache, reasoning, audio, and prediction token fields are now normalized into Responses usage details at the package boundary
 - [x] LiteLLM-inspired usage normalization now associates response usage with normalized model pricing metadata to expose estimated input, output, and total cost at the package boundary
 - [x] Package `/v1/models` output now includes a normalized `protocol` view that merges provider defaults with model overrides for tools, multimodal input, reasoning, compact support, structured output, and output-token limits
+- [x] Package model catalogs and `/v1/models` output now include a normalized `capabilityCatalog` summary for tool calling, file/PDF input, reasoning, compact support, and provider/model-specific quirks
 - [x] Package-local trace mode now exposes optional request/response/retry/stream trace hooks, and the internal standalone launcher can emit those trace events as NDJSON to stderr
 - [x] Upstream error normalization now exposes stable categories and retry hints for authentication, rate-limit, transient, unsupported-feature, invalid-request, and malformed-upstream cases
 - [x] Package contract coverage now includes provider-shaped golden fixtures for streaming tool-call deltas, Gemini-style usage payloads, and top-level rate-limit error events
@@ -240,11 +241,11 @@ required to consider the current package extraction complete.
 They stay here because they are still package-local protocol improvements,
 not bridge-side WeChat product work.
 
-- [ ] Expand the package-local provider capability catalog beyond the current presets and pricing metadata
-  Add normalized capability flags for tool calling, vision, file/PDF input,
-  JSON/schema support, reasoning support, web search, parallel tool calls,
-  and provider/model-specific quirks where the metadata is reliable enough to
-  drive downgrade or debug behavior.
+- [x] Expand the package-local provider capability catalog beyond the current presets and pricing metadata
+  The package now exposes a normalized `capabilityCatalog` summary for tool
+  calling, image/file/PDF input, JSON/schema support, reasoning support,
+  compact support, limits, and provider/model-specific quirks where the
+  metadata is reliable enough to drive downgrade or debug behavior.
 - [x] Strengthen provider error taxonomy and retry hints beyond the current normalized upstream error surface
   The package now distinguishes authentication failures, rate limits,
   transient upstream failures, unsupported-feature responses, invalid

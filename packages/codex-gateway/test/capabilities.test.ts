@@ -1,6 +1,7 @@
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import {
+  buildOpenAICompatibleModelCatalog,
   buildOpenAICompatibleExternalModelCatalog,
   getOpenAICompatibleProviderPreset,
   mergeOpenAICompatibleProviderCapabilities,
@@ -43,6 +44,48 @@ test('external model catalogs merge model-level capabilities', () => {
   assert.deepEqual(catalog.capabilities?.modelCapabilities?.['qwen-test']?.reasoning, {
     supportedReasoningEfforts: ['none', 'low', 'medium', 'high'],
     defaultReasoningEffort: null,
+  });
+});
+
+test('package model catalogs expose normalized capability catalog metadata', () => {
+  const preset = getOpenAICompatibleProviderPreset('minimax');
+  const catalog = buildOpenAICompatibleModelCatalog({
+    defaultModel: preset.defaultModel,
+    modelIds: [preset.defaultModel],
+    displayName: preset.displayName,
+    capabilities: preset.capabilities,
+  });
+
+  assert.equal(catalog.length, 1);
+  assert.deepEqual(catalog[0].capabilityCatalog, {
+    toolCalling: {
+      supported: true,
+      parallel: false,
+      builtinWebSearch: false,
+    },
+    inputModalities: {
+      image: false,
+      file: false,
+      pdf: false,
+    },
+    structuredOutput: {
+      jsonSchema: true,
+    },
+    reasoning: {
+      supported: true,
+      supportedReasoningEfforts: ['low', 'medium', 'high'],
+      defaultReasoningEffort: null,
+    },
+    responses: {
+      compact: false,
+    },
+    limits: {
+      maxOutputTokens: 65536,
+    },
+    quirks: [
+      'parallel_tool_calls_filtered',
+      'text_placeholder_for_unsupported_input_parts',
+    ],
   });
 });
 

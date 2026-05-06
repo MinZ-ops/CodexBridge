@@ -180,6 +180,36 @@ test('adapter server exposes model metadata from package boundary', async () => 
       parallelToolCalls: false,
       maxOutputTokens: 4096,
     });
+    assert.deepEqual(body.data[0].capabilityCatalog, {
+      toolCalling: {
+        supported: true,
+        parallel: false,
+        builtinWebSearch: false,
+      },
+      inputModalities: {
+        image: false,
+        file: false,
+        pdf: false,
+      },
+      structuredOutput: {
+        jsonSchema: true,
+      },
+      reasoning: {
+        supported: true,
+        supportedReasoningEfforts: ['low', 'high'],
+        defaultReasoningEffort: 'high',
+      },
+      responses: {
+        compact: false,
+      },
+      limits: {
+        maxOutputTokens: 4096,
+      },
+      quirks: [
+        'parallel_tool_calls_filtered',
+        'text_placeholder_for_unsupported_input_parts',
+      ],
+    });
     assert.deepEqual(body.data[0].protocol, {
       tools: {
         supported: true,
@@ -191,6 +221,7 @@ test('adapter server exposes model metadata from package boundary', async () => 
         imageUrlInput: null,
         imageBase64Input: null,
         fileInput: false,
+        pdfInput: false,
         fileDataInput: null,
         fileIdInput: null,
         fileUrlInput: null,

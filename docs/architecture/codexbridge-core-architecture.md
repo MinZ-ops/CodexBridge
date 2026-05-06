@@ -262,6 +262,7 @@ Current Phase 5 decision:
 - let server-side upstream error normalization expose stable machine-readable categories and retry hints for authentication, rate limits, transient upstream failures, unsupported features, invalid requests, and malformed success payloads
 - keep package-local golden fixtures for representative provider-shaped responses and stream events so converter regressions can be checked against stable samples instead of only inline synthetic test data
 - let package-level model catalogs normalize optional pricing and context-window metadata so `/v1/models` can expose richer provider/model hints without bridge-specific logic
+- let package-level model catalogs and `/v1/models` output expose a normalized `capabilityCatalog` summary for tool calling, file/PDF input, reasoning, compact support, and reliable provider/model quirks
 - let usage normalization fold common provider aliases for cache, reasoning, audio, and prediction-token accounting into stable Responses usage details
 - let usage normalization associate usage totals with normalized model pricing metadata so the package can expose estimated input/output/total cost without bridge-owned billing logic
 - make the future IR boundary explicit in code: keep `openai-chat-compatible` on the current direct path, and gate Anthropic/Gemini-native targets behind a later IR decision instead of stretching the Chat shim

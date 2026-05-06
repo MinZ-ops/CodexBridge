@@ -68,6 +68,7 @@ export interface OpenAICompatibleMultimodalCapabilities {
   supportsImageUrlInput?: boolean;
   supportsImageBase64Input?: boolean;
   supportsFileInput?: boolean;
+  supportsPdfInput?: boolean;
   supportsFileDataInput?: boolean;
   supportsFileIdInput?: boolean;
   supportsFileUrlInput?: boolean;
@@ -91,6 +92,7 @@ export interface OpenAICompatibleModelCapabilities {
   tools?: boolean;
   vision?: boolean;
   fileInput?: boolean;
+  pdfInput?: boolean;
   jsonSchema?: boolean;
   reasoning?: boolean | {
     supportedReasoningEfforts?: string[];
@@ -423,7 +425,12 @@ function convertModelCapabilitiesToProviderCapabilities(
   if (modelCapabilities.webSearch !== undefined) {
     overrides.supportsBuiltinWebSearchTool = Boolean(modelCapabilities.webSearch);
   }
-  if (modelCapabilities.vision !== undefined || modelCapabilities.fileInput !== undefined || modelCapabilities.multimodal) {
+  if (
+    modelCapabilities.vision !== undefined
+    || modelCapabilities.fileInput !== undefined
+    || modelCapabilities.pdfInput !== undefined
+    || modelCapabilities.multimodal
+  ) {
     const multimodalOverrides: OpenAICompatibleMultimodalCapabilities = {
       ...(modelCapabilities.multimodal ?? {}),
     };
@@ -432,6 +439,9 @@ function convertModelCapabilitiesToProviderCapabilities(
     }
     if (modelCapabilities.fileInput !== undefined) {
       multimodalOverrides.supportsFileInput = Boolean(modelCapabilities.fileInput);
+    }
+    if (modelCapabilities.pdfInput !== undefined) {
+      multimodalOverrides.supportsPdfInput = Boolean(modelCapabilities.pdfInput);
     }
     overrides.multimodal = multimodalOverrides;
   }

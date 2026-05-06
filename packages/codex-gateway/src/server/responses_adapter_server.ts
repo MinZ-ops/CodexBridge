@@ -7,6 +7,9 @@ import {
   translateChatCompletionsSseStreamToResponsesSse,
 } from '../converters/responses_adapter.js';
 import {
+  buildOpenAICompatibleCapabilityCatalogMetadata,
+} from '../capabilities/capability_presets.js';
+import {
   getProviderThinkingSupport,
   resolveOpenAICompatibleProviderCapabilitiesForModel,
   type OpenAICompatibleModelCapabilities,
@@ -688,6 +691,16 @@ function normalizeModels(
         object: normalizeString(model?.object) || 'model',
         created: Number.isFinite(Number(model?.created)) ? Number(model.created) : now,
         owned_by: normalizeString(model?.owned_by) || ownedBy,
+        capabilityCatalog: model?.capabilityCatalog && typeof model.capabilityCatalog === 'object'
+          ? model.capabilityCatalog
+          : buildOpenAICompatibleCapabilityCatalogMetadata({
+            modelId: id,
+            providerKind,
+            providerCapabilities,
+            modelCapabilities: model?.capabilities && typeof model.capabilities === 'object'
+              ? model.capabilities as OpenAICompatibleModelCapabilities
+              : null,
+          }),
         protocol: buildProtocolMetadataForModel({
           modelId: id,
           modelEntry: model,
@@ -713,6 +726,12 @@ function normalizeModels(
     object: 'model',
     created: now,
     owned_by: ownedBy,
+    capabilityCatalog: buildOpenAICompatibleCapabilityCatalogMetadata({
+      modelId: defaultModel,
+      providerKind,
+      providerCapabilities,
+      modelCapabilities: null,
+    }),
     protocol: buildProtocolMetadataForModel({
       modelId: defaultModel,
       modelEntry: null,
@@ -764,6 +783,8 @@ function buildProtocolMetadataForModel({
       imageUrlInput: normalizeNullableBoolean(multimodal?.supportsImageUrlInput),
       imageBase64Input: normalizeNullableBoolean(multimodal?.supportsImageBase64Input),
       fileInput: normalizeNullableBoolean(multimodal?.supportsFileInput),
+      pdfInput: normalizeNullableBoolean(multimodal?.supportsPdfInput)
+        ?? (normalizeNullableBoolean(multimodal?.supportsFileInput) === false ? false : null),
       fileDataInput: normalizeNullableBoolean(multimodal?.supportsFileDataInput),
       fileIdInput: normalizeNullableBoolean(multimodal?.supportsFileIdInput),
       fileUrlInput: normalizeNullableBoolean(multimodal?.supportsFileUrlInput),

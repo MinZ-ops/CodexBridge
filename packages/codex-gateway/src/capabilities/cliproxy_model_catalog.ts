@@ -247,6 +247,7 @@ function buildModelCapabilities(entry: CliproxyModelCatalogEntry): OpenAICompati
     tools,
     vision: isVisionModel(id, entry.category),
     fileInput: false,
+    pdfInput: false,
     jsonSchema: !hasExplicitSupportedParameters || supportedParameters.includes('response_format'),
     reasoning,
     thinking: buildThinkingPolicy(entry, levels),
