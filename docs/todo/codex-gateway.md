@@ -81,6 +81,7 @@ Latest progress:
 - [x] Package `tsconfig` now emits into `packages/codex-gateway/dist`, and public-surface tests lock that build layout to the `package.json` exports/files contract
 - [x] OpenRouter live smoke is no longer treated as a current phase blocker; it is deferred until credentials are available again
 - [x] `codex-gateway` now ships an internal-only standalone server launcher that can boot the local `/v1/responses` adapter directly from env, without pulling in CodexBridge runtime code
+- [x] The standalone launcher now supports dotenv-style env-file loading (`CODEX_GATEWAY_ENV_FILE` / `--env-file`) so it can run without manual shell exports
 
 ## Packaging Direction
 
@@ -100,6 +101,7 @@ Rules:
 - Phase 5 decision on 2026-05-06: keep the package internal-only for now; do not widen npm/public surface until live-provider coverage and integration contracts are stable
 - Keep package-local build output aligned with `package.json` exports/files so the internal package can still be consumed exactly as declared
 - Standalone server launch is allowed as an internal validation/tooling aid, but it is still not positioned as a public gateway product
+- The standalone launcher may load dotenv-style env files for internal operation, but explicit process env must continue to win over file defaults
 
 ## Migration Plan
 
@@ -199,6 +201,7 @@ Frozen migration surface:
 - [x] Decide whether to publish as `@codexbridge/codex-gateway`; keep it private/internal until the API boundary is stable
 - [x] Keep package metadata and package-local build output aligned so `exports` and `files` point at real artifacts
 - [x] Add an internal-only standalone launcher for the local `/v1/responses` adapter server without widening the package into a public gateway product
+- [x] Let the internal standalone launcher load dotenv-style env files without depending on CodexBridge runtime env loaders
 - [ ] If publication ever becomes a goal later, decide whether to promote the standalone launcher into a supported standalone HTTP proxy binary
 
 ## Reference Usage

@@ -1,8 +1,13 @@
 import assert from 'node:assert/strict';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import test from 'node:test';
 import {
   createCodexGatewayStandaloneServerConfigFromEnv,
   createCodexGatewayStandaloneServerFromEnv,
+  loadCodexGatewayStandaloneEnvFile,
+  resolveCodexGatewayStandaloneServerEnv,
 } from '../src/index.js';
 
 test('standalone server config resolves preset aliases and capability overrides from env', () => {
@@ -64,4 +69,59 @@ test('standalone server config rejects empty external model catalogs', () => {
     }),
     /did not contain any model entries/,
   );
+});
+
+test('standalone server env file loader parses dotenv-style files and ignores invalid lines', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-gateway-env-file-'));
+  const envFilePath = path.join(tempDir, 'gateway.env');
+  fs.writeFileSync(envFilePath, [
+    '# comment',
+    'OPENROUTER_API_KEY=file-key',
+    'CODEX_GATEWAY_MODEL="openai/gpt-4.1-mini"',
+    'BAD LINE',
+    '1BAD=value',
+  ].join('\n'));
+
+  const loaded = loadCodexGatewayStandaloneEnvFile(envFilePath);
+  assert.equal(loaded.OPENROUTER_API_KEY, 'file-key');
+  assert.equal(loaded.CODEX_GATEWAY_MODEL, 'openai/gpt-4.1-mini');
+  assert.equal('BAD LINE' in loaded, false);
+  assert.equal('1BAD' in loaded, false);
+});
+
+test('standalone server env resolution lets explicit env override env-file defaults', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-gateway-env-merge-'));
+  const envFilePath = path.join(tempDir, 'gateway.env');
+  fs.writeFileSync(envFilePath, [
+    'OPENROUTER_API_KEY=file-key',
+    'CODEX_GATEWAY_MODEL=openai/gpt-4.1-mini',
+  ].join('\n'));
+
+  const resolved = resolveCodexGatewayStandaloneServerEnv({
+    env: {
+      CODEX_GATEWAY_ENV_FILE: envFilePath,
+      OPENROUTER_API_KEY: 'shell-key',
+    },
+  });
+
+  assert.equal(resolved.OPENROUTER_API_KEY, 'shell-key');
+  assert.equal(resolved.CODEX_GATEWAY_MODEL, 'openai/gpt-4.1-mini');
+});
+
+test('standalone server config loads provider defaults from CODEX_GATEWAY_ENV_FILE', () => {
+  const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'codex-gateway-config-env-'));
+  const envFilePath = path.join(tempDir, 'gateway.env');
+  fs.writeFileSync(envFilePath, [
+    'CODEX_GATEWAY_CAPABILITY_PRESET=openrouter',
+    'OPENROUTER_API_KEY=file-key',
+    'OPENROUTER_MODEL=openai/gpt-4.1-mini',
+  ].join('\n'));
+
+  const config = createCodexGatewayStandaloneServerConfigFromEnv({
+    CODEX_GATEWAY_ENV_FILE: envFilePath,
+  });
+
+  assert.equal(config.presetId, 'openrouter');
+  assert.equal(config.apiKey, 'file-key');
+  assert.equal(config.defaultModel, 'openai/gpt-4.1-mini');
 });

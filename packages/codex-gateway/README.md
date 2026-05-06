@@ -24,8 +24,22 @@ or:
 node packages/codex-gateway/dist/cli.js
 ```
 
+You can also load a dotenv-style file:
+
+```bash
+node packages/codex-gateway/dist/cli.js --env-file /path/to/codex-gateway.env
+```
+
+or:
+
+```bash
+CODEX_GATEWAY_ENV_FILE=/path/to/codex-gateway.env \
+node packages/codex-gateway/dist/cli.js
+```
+
 Supported env knobs:
 
+- `CODEX_GATEWAY_ENV_FILE`
 - `CODEX_GATEWAY_CAPABILITY_PRESET`
 - `CODEX_GATEWAY_API_KEY`
 - `CODEX_GATEWAY_BASE_URL`

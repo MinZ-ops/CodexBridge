@@ -26,10 +26,11 @@ export interface CodexGatewayStandaloneServerConfig extends OpenAICompatibleResp
 export function createCodexGatewayStandaloneServerConfigFromEnv(
   env: EnvRecord = process.env,
 ): CodexGatewayStandaloneServerConfig {
-  const preset = getOpenAICompatibleProviderPreset(normalizeString(env.CODEX_GATEWAY_CAPABILITY_PRESET) || 'default');
+  const resolvedEnv = resolveCodexGatewayStandaloneServerEnv({ env });
+  const preset = getOpenAICompatibleProviderPreset(normalizeString(resolvedEnv.CODEX_GATEWAY_CAPABILITY_PRESET) || 'default');
   const registration = OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS.find((entry) => entry.presetId === preset.id) ?? null;
 
-  const apiKey = resolveConfiguredValue(env, [
+  const apiKey = resolveConfiguredValue(resolvedEnv, [
     'CODEX_GATEWAY_API_KEY',
     preset.apiKeyEnv,
     registration?.alternativeApiKeyEnv,
@@ -43,28 +44,28 @@ export function createCodexGatewayStandaloneServerConfigFromEnv(
     );
   }
 
-  const upstreamBaseUrl = resolveConfiguredValue(env, [
+  const upstreamBaseUrl = resolveConfiguredValue(resolvedEnv, [
     'CODEX_GATEWAY_BASE_URL',
     registration ? `${registration.envPrefix}_BASE_URL` : null,
     registration?.alternativeBaseUrlEnv,
   ]) || preset.baseUrl;
 
-  const defaultModel = resolveConfiguredValue(env, [
+  const defaultModel = resolveConfiguredValue(resolvedEnv, [
     'CODEX_GATEWAY_MODEL',
     registration ? `${registration.envPrefix}_MODEL` : null,
     registration?.alternativeModelEnv,
   ]) || preset.defaultModel;
 
-  const providerName = normalizeString(env.CODEX_GATEWAY_PROVIDER_NAME) || preset.displayName;
-  const providerKind = normalizeString(env.CODEX_GATEWAY_PROVIDER_KIND) || 'openai-compatible';
-  const ownedBy = normalizeString(env.CODEX_GATEWAY_OWNED_BY) || preset.ownedBy;
-  const host = normalizeString(env.CODEX_GATEWAY_HOST) || '127.0.0.1';
-  const port = normalizePort(env.CODEX_GATEWAY_PORT);
-  const upstreamChatCompletionsPath = normalizeString(env.CODEX_GATEWAY_UPSTREAM_CHAT_PATH)
+  const providerName = normalizeString(resolvedEnv.CODEX_GATEWAY_PROVIDER_NAME) || preset.displayName;
+  const providerKind = normalizeString(resolvedEnv.CODEX_GATEWAY_PROVIDER_KIND) || 'openai-compatible';
+  const ownedBy = normalizeString(resolvedEnv.CODEX_GATEWAY_OWNED_BY) || preset.ownedBy;
+  const host = normalizeString(resolvedEnv.CODEX_GATEWAY_HOST) || '127.0.0.1';
+  const port = normalizePort(resolvedEnv.CODEX_GATEWAY_PORT);
+  const upstreamChatCompletionsPath = normalizeString(resolvedEnv.CODEX_GATEWAY_UPSTREAM_CHAT_PATH)
     || preset.upstreamChatCompletionsPath;
 
   const capabilityOverrides = parseOptionalJson(
-    env.CODEX_GATEWAY_CAPABILITY_OVERRIDES_JSON,
+    resolvedEnv.CODEX_GATEWAY_CAPABILITY_OVERRIDES_JSON,
     'CODEX_GATEWAY_CAPABILITY_OVERRIDES_JSON',
   );
   let providerCapabilities = mergeOpenAICompatibleProviderCapabilities(
@@ -73,10 +74,10 @@ export function createCodexGatewayStandaloneServerConfigFromEnv(
   );
 
   const inlineModelCatalog = parseOptionalJson(
-    env.CODEX_GATEWAY_MODEL_CATALOG_JSON,
+    resolvedEnv.CODEX_GATEWAY_MODEL_CATALOG_JSON,
     'CODEX_GATEWAY_MODEL_CATALOG_JSON',
   );
-  const modelCatalogPath = normalizeString(env.CODEX_GATEWAY_MODEL_CATALOG_PATH);
+  const modelCatalogPath = normalizeString(resolvedEnv.CODEX_GATEWAY_MODEL_CATALOG_PATH);
   const modelCatalogFromPath = modelCatalogPath
     ? parseJsonFile(modelCatalogPath, 'CODEX_GATEWAY_MODEL_CATALOG_PATH')
     : undefined;
@@ -124,6 +125,38 @@ export function createCodexGatewayStandaloneServerConfigFromEnv(
     upstreamChatCompletionsPath,
     ownedBy,
   };
+}
+
+export function resolveCodexGatewayStandaloneServerEnv(
+  {
+    env = process.env,
+    envFilePath = null,
+  }: {
+    env?: EnvRecord;
+    envFilePath?: string | null;
+  } = {},
+): EnvRecord {
+  const resolvedPath = normalizeString(envFilePath) || normalizeString(env.CODEX_GATEWAY_ENV_FILE);
+  if (!resolvedPath) {
+    return { ...env };
+  }
+  return {
+    ...loadCodexGatewayStandaloneEnvFile(resolvedPath),
+    ...env,
+  };
+}
+
+export function loadCodexGatewayStandaloneEnvFile(filePath: string): Record<string, string> {
+  const resolvedPath = normalizeString(filePath);
+  if (!resolvedPath) {
+    throw new Error('Codex Gateway standalone server env file path must not be empty.');
+  }
+  try {
+    const content = fs.readFileSync(resolvedPath, 'utf8');
+    return parseDotenvLikeContent(content);
+  } catch (error) {
+    throw new Error(`Codex Gateway standalone server env file could not be loaded from ${resolvedPath}: ${error instanceof Error ? error.message : String(error)}`);
+  }
 }
 
 export function createCodexGatewayStandaloneServerFromEnv(
@@ -190,4 +223,31 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 
 function normalizeString(value: unknown): string {
   return typeof value === 'string' ? value.trim() : '';
+}
+
+function parseDotenvLikeContent(content: string): Record<string, string> {
+  const parsed: Record<string, string> = {};
+  for (const rawLine of content.split(/\r?\n/u)) {
+    const line = rawLine.trim();
+    if (!line || line.startsWith('#')) {
+      continue;
+    }
+    const index = line.indexOf('=');
+    if (index <= 0) {
+      continue;
+    }
+    const key = line.slice(0, index).trim();
+    if (!/^[A-Za-z_][A-Za-z0-9_]*$/u.test(key)) {
+      continue;
+    }
+    let value = line.slice(index + 1).trim();
+    if (
+      (value.startsWith('"') && value.endsWith('"'))
+      || (value.startsWith("'") && value.endsWith("'"))
+    ) {
+      value = value.slice(1, -1);
+    }
+    parsed[key] = value;
+  }
+  return parsed;
 }
