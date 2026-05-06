@@ -98,9 +98,9 @@ Codex output quality over adding more bridge-only command surface area.
 
 ### P2: Mission Control
 
-- [ ] Create `packages/mission-control` as an internal package skeleton, following the same internal-package pattern as `packages/responses-adapter`
-- [ ] Keep Mission Control in the current repository first; do not introduce a workspace/monorepo layer until multiple internal packages need independent dependency/version management
-- [ ] Treat `/agent` as the Mission Control v0 surface instead of adding a new `/mission` command too early
+- [x] Create `packages/mission-control` as an internal package skeleton, following the same internal-package pattern as `packages/responses-adapter`
+- [x] Keep Mission Control in the current repository first; do not introduce a workspace/monorepo layer until multiple internal packages need independent dependency/version management
+- [x] Treat `/agent` as the Mission Control v0 surface instead of adding a new `/mission` command too early
 - [ ] Keep Symphony's real core ideas intact: workflow-owned policy, single orchestrator authority, stable workspace identity, continuation retries after normal exit, and handoff/wait-user states
 - [ ] Mine the copied `codex-mission-control` prototype for bounded-contract, lease, heartbeat, and tmux ideas without inheriting its package name or direct shell-runner shape
 - [ ] Add `.codexbridge/mission/WORKFLOW.md` loading with YAML front matter plus prompt body, using Symphony's workflow-contract pattern

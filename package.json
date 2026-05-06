@@ -7,6 +7,10 @@
   "scripts": {
     "build": "tsc -p tsconfig.json",
     "start": "tsx src/index.ts",
+    "mission-control:build": "tsc -p packages/mission-control/tsconfig.json",
+    "mission-control:check-boundary": "node scripts/check-mission-control-boundary.mjs",
+    "mission-control:test": "tsx --test packages/mission-control/test/*.test.ts",
+    "mission-control:typecheck": "tsc -p packages/mission-control/tsconfig.json --noEmit",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "typecheck:js": "tsc -p tsconfig.checkjs.json",
     "responses-adapter:build": "tsc -p packages/responses-adapter/tsconfig.json",

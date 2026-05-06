@@ -20,6 +20,7 @@ CodexBridge is a Codex-centered gateway for connecting multiple chat platforms t
 ## Repository Layout
 
 ```text
+packages/
 src/
   core/
   platforms/

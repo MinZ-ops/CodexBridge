@@ -102,17 +102,17 @@ Rules:
 
 Package bootstrap target:
 
-- [ ] Package root: `packages/mission-control`
-- [ ] Package metadata: `packages/mission-control/package.json`
-- [ ] Package source entry: `packages/mission-control/src/index.ts`
-- [ ] Package tsconfig: `packages/mission-control/tsconfig.json`
-- [ ] Package README documents ownership and non-ownership
-- [ ] Root scripts:
+- [x] Package root: `packages/mission-control`
+- [x] Package metadata: `packages/mission-control/package.json`
+- [x] Package source entry: `packages/mission-control/src/index.ts`
+- [x] Package tsconfig: `packages/mission-control/tsconfig.json`
+- [x] Package README documents ownership and non-ownership
+- [x] Root scripts:
   - `mission-control:typecheck`
   - `mission-control:test`
   - `mission-control:build`
   - `mission-control:check-boundary`
-- [ ] Boundary script prevents imports from:
+- [x] Boundary script prevents imports from:
   - `src/platforms/**`
   - `src/runtime/**`
   - `src/i18n/**`
@@ -139,17 +139,17 @@ This backlog follows the route below:
 - [ ] Converge the result into one provider-pluggable internal package:
   `@codexbridge/mission-control`
 
-## Phase 0: Freeze Current `/agent` Behavior
+## Phase 0: Baseline Current `/agent` Behavior
 
 Before moving ownership into the package:
 
 - [ ] Record the current `/agent` public behavior that users already rely on
-- [ ] Freeze current `/agent` tests covering:
+- [ ] Lock current `/agent` migration-protection tests covering:
   - create / confirm / cancel
   - list / show / stop / retry / result
   - approval + interrupted-turn handling
   - artifact/result delivery
-- [ ] Freeze current `/auto` behavior that should later delegate into mission runs
+- [ ] Record the current `/auto` behavior that should later delegate into mission runs
 
 ## Phase 1: Domain and Persistence
 
