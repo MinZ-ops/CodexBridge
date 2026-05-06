@@ -61,9 +61,16 @@ Avoid frequent edits here unless the change is truly cross-cutting:
 ## Current Active Focus
 
 - [ ] Finish live-provider smoke coverage for Qwen/DashScope and OpenRouter once credentials are available
-- [ ] Keep new provider onboarding config-first and capability-driven instead of adding one-off provider classes
+- [x] Keep new provider onboarding config-first and capability-driven instead of adding one-off provider classes
 - [ ] Keep package ownership strictly at protocol/gateway level
 - [ ] Decide whether Phase 5 should remain internal-only or move toward publishable package form
+
+Latest progress:
+
+- [x] Preset-backed provider profile exposure now iterates `OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS` instead of hardcoded per-provider `pushProfile(...)` calls in `src/providers/codex/config.ts`
+- [x] Qwen/DashScope env alias handling is covered by dedicated config tests so compatible-provider onboarding stays registration-driven
+- [x] `CODEX_COMPAT_PROFILES_JSON` can now declare multiple custom OpenAI-compatible provider profiles without adding new provider/plugin classes
+- [x] Custom compatible profile JSON ignores invalid entries while preserving existing built-in preset, single-profile, and legacy config paths
 
 ## Packaging Direction
 
@@ -192,6 +199,6 @@ Frozen migration surface:
 - [x] The gateway package can be tested without starting WeChat or CodexBridge runtime
 - [x] The gateway package has no imports from CodexBridge core, platform runtimes, stores, slash commands, or i18n
 - [x] Legacy CodexBridge import paths still work through re-export shims during the migration window
-- [ ] Adding a new OpenAI-compatible provider normally requires config/capability data, not a new provider plugin class
+- [x] Adding a new OpenAI-compatible provider normally requires config/capability data, not a new provider plugin class
 - [x] Unsupported provider features produce clear downgrade/error behavior instead of silent stalls or malformed upstream payloads
 - [x] Existing CodexBridge OpenAI-compatible tests pass through the new package boundary

@@ -42,6 +42,14 @@ export interface OpenAICompatibleProviderPreset {
   capabilities: OpenAICompatibleProviderCapabilities | null;
 }
 
+export interface OpenAICompatibleProfilePresetRegistration {
+  presetId: OpenAICompatibleCapabilityPresetId;
+  envPrefix: string;
+  alternativeApiKeyEnv?: string | null;
+  alternativeBaseUrlEnv?: string | null;
+  alternativeModelEnv?: string | null;
+}
+
 const OPENAI_COMPATIBLE_DEFAULT_CAPABILITIES: OpenAICompatibleProviderCapabilities = {
   supportsBuiltinWebSearchTool: false,
   supportsResponsesCompact: false,
@@ -237,6 +245,40 @@ const PRESETS: Record<OpenAICompatibleCapabilityPresetId, OpenAICompatibleProvid
     categories: ['codex-pro'],
   }),
 };
+
+export const OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS: readonly OpenAICompatibleProfilePresetRegistration[] = [
+  {
+    presetId: 'deepseek',
+    envPrefix: 'DEEPSEEK',
+  },
+  {
+    presetId: 'minimax',
+    envPrefix: 'MINIMAX',
+  },
+  {
+    presetId: 'qwen',
+    envPrefix: 'QWEN',
+    alternativeApiKeyEnv: 'DASHSCOPE_API_KEY',
+    alternativeBaseUrlEnv: 'DASHSCOPE_BASE_URL',
+    alternativeModelEnv: 'DASHSCOPE_MODEL',
+  },
+  {
+    presetId: 'openrouter',
+    envPrefix: 'OPENROUTER',
+  },
+  {
+    presetId: 'kimi',
+    envPrefix: 'KIMI',
+  },
+  {
+    presetId: 'gemini',
+    envPrefix: 'GEMINI',
+  },
+  {
+    presetId: 'iflow',
+    envPrefix: 'IFLOW',
+  },
+] as const;
 
 export function getOpenAICompatibleProviderPreset(id: string | null | undefined): OpenAICompatibleProviderPreset {
   const normalized = normalizePresetId(id);

@@ -25,6 +25,59 @@ test('loadCodexProfilesFromEnv keeps Codex OpenAI as the default profile', () =>
   assert.equal(result.profiles[1]?.config.defaultModel, 'example-model');
 });
 
+test('loadCodexProfilesFromEnv exposes multiple JSON-defined compatible providers', () => {
+  const result = loadCodexProfilesFromEnv({
+    CODEX_REAL_BIN: '/usr/bin/codex',
+    CODEX_COMPAT_PROFILES_JSON: JSON.stringify([{
+      id: 'groq',
+      displayName: 'Groq',
+      baseUrl: 'https://api.groq.com/openai/v1',
+      defaultModel: 'llama-3.3-70b-versatile',
+      capabilityPreset: 'default',
+      modelIds: ['llama-3.3-70b-versatile', 'moonshotai/kimi-k2-instruct-0905'],
+    }, {
+      id: 'together',
+      displayName: 'Together',
+      apiKeyEnv: 'TOGETHER_API_KEY',
+      baseUrl: 'https://api.together.xyz/v1',
+      defaultModel: 'Qwen/Qwen3-Coder-480B-A35B-Instruct-FP8',
+      capabilityPreset: 'qwen',
+      providerLabel: 'together',
+    }]),
+  });
+
+  const groq = result.profiles.find((entry) => entry.id === 'groq');
+  const together = result.profiles.find((entry) => entry.id === 'together');
+  assert.equal(groq?.providerKind, 'openai-compatible');
+  assert.equal(groq?.config.apiKeyEnv, 'GROQ_API_KEY');
+  assert.equal(groq?.config.baseUrl, 'https://api.groq.com/openai/v1');
+  assert.equal(groq?.config.defaultModel, 'llama-3.3-70b-versatile');
+  assert.deepEqual((groq?.config.modelCatalog as any[]).map((entry) => entry.id), [
+    'llama-3.3-70b-versatile',
+    'moonshotai/kimi-k2-instruct-0905',
+  ]);
+  assert.equal(together?.providerKind, 'openai-compatible');
+  assert.equal(together?.config.apiKeyEnv, 'TOGETHER_API_KEY');
+  assert.equal(together?.config.providerLabel, 'together');
+  assert.equal(together?.config.capabilities?.multimodal?.supportsImageInput, false);
+});
+
+test('loadCodexProfilesFromEnv ignores invalid JSON-defined compatible providers', () => {
+  const result = loadCodexProfilesFromEnv({
+    CODEX_REAL_BIN: '/usr/bin/codex',
+    CODEX_COMPAT_PROFILES_JSON: JSON.stringify([{
+      id: 'missing-base-url',
+      defaultModel: 'example-model',
+    }, {
+      id: 'missing-model',
+      baseUrl: 'https://provider.example/v1',
+    }]),
+  });
+
+  assert.equal(result.profiles.some((entry) => entry.id === 'missing-base-url'), false);
+  assert.equal(result.profiles.some((entry) => entry.id === 'missing-model'), false);
+});
+
 test('loadCodexProfilesFromEnv exposes DeepSeek through the generic OpenAI-compatible profile loader', () => {
   const result = loadCodexProfilesFromEnv({
     CODEX_REAL_BIN: '/usr/bin/codex',
@@ -87,6 +140,21 @@ test('loadCodexProfilesFromEnv exposes additional CLIProxy-style compatible pres
   assert.equal(gemini?.config.defaultModel, 'gemini-2.5-pro');
   assert.equal(iflow?.providerKind, 'openai-compatible');
   assert.equal(iflow?.config.defaultModel, 'qwen3-coder-plus');
+});
+
+test('loadCodexProfilesFromEnv exposes Qwen through DashScope-compatible env aliases', () => {
+  const result = loadCodexProfilesFromEnv({
+    CODEX_REAL_BIN: '/usr/bin/codex',
+    DASHSCOPE_API_KEY: 'sk-dashscope',
+    DASHSCOPE_BASE_URL: 'https://dashscope.aliyuncs.com/compatible-mode/v1',
+    DASHSCOPE_MODEL: 'qwen-max',
+  });
+
+  const profile = result.profiles.find((entry) => entry.id === 'qwen');
+  assert.equal(profile?.providerKind, 'openai-compatible');
+  assert.equal(profile?.config.apiKeyEnv, 'DASHSCOPE_API_KEY');
+  assert.equal(profile?.config.baseUrl, 'https://dashscope.aliyuncs.com/compatible-mode/v1');
+  assert.equal(profile?.config.defaultModel, 'qwen-max');
 });
 
 test('loadCodexProfilesFromEnv imports CLIProxyAPI models.json shaped catalogs', () => {

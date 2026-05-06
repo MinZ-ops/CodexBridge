@@ -4,6 +4,7 @@ import {
   buildOpenAICompatibleExternalModelCatalog,
   buildOpenAICompatibleModelCatalog,
   getOpenAICompatibleProviderPreset,
+  OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS,
 } from '../openai_compatible/capability_presets.js';
 import {
   mergeOpenAICompatibleProviderCapabilities,
@@ -42,6 +43,23 @@ interface CodexConfigLoadOptions {
   platform?: NodeJS.Platform;
   env?: NodeJS.ProcessEnv;
   cwd?: string;
+}
+
+interface CustomOpenAICompatibleProfileConfig {
+  id?: unknown;
+  displayName?: unknown;
+  providerName?: unknown;
+  apiKeyEnv?: unknown;
+  baseUrl?: unknown;
+  defaultModel?: unknown;
+  model?: unknown;
+  providerLabel?: unknown;
+  capabilityPreset?: unknown;
+  capabilities?: unknown;
+  upstreamChatCompletionsPath?: unknown;
+  ownedBy?: unknown;
+  modelIds?: unknown;
+  modelCatalogPath?: unknown;
 }
 
 export function loadCodexProfilesFromEnv(
@@ -87,58 +105,25 @@ export function loadCodexProfilesFromEnv(
     },
   ];
 
-  pushProfile(profiles, buildPresetOpenAICompatibleProfile({
-    presetId: 'deepseek',
-    prefix: 'DEEPSEEK',
+  for (const registration of OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS) {
+    pushProfile(profiles, buildPresetOpenAICompatibleProfile({
+      presetId: registration.presetId,
+      prefix: registration.envPrefix,
+      env,
+      codexRealBin,
+      now,
+      alternativeApiKeyEnv: registration.alternativeApiKeyEnv,
+      alternativeBaseUrlEnv: registration.alternativeBaseUrlEnv,
+      alternativeModelEnv: registration.alternativeModelEnv,
+    }));
+  }
+  for (const profile of buildCustomOpenAICompatibleProfiles({
     env,
     codexRealBin,
     now,
-  }));
-  pushProfile(profiles, buildPresetOpenAICompatibleProfile({
-    presetId: 'minimax',
-    prefix: 'MINIMAX',
-    env,
-    codexRealBin,
-    now,
-  }));
-  pushProfile(profiles, buildPresetOpenAICompatibleProfile({
-    presetId: 'qwen',
-    prefix: 'QWEN',
-    env,
-    codexRealBin,
-    now,
-    alternativeApiKeyEnv: 'DASHSCOPE_API_KEY',
-    alternativeBaseUrlEnv: 'DASHSCOPE_BASE_URL',
-    alternativeModelEnv: 'DASHSCOPE_MODEL',
-  }));
-  pushProfile(profiles, buildPresetOpenAICompatibleProfile({
-    presetId: 'openrouter',
-    prefix: 'OPENROUTER',
-    env,
-    codexRealBin,
-    now,
-  }));
-  pushProfile(profiles, buildPresetOpenAICompatibleProfile({
-    presetId: 'kimi',
-    prefix: 'KIMI',
-    env,
-    codexRealBin,
-    now,
-  }));
-  pushProfile(profiles, buildPresetOpenAICompatibleProfile({
-    presetId: 'gemini',
-    prefix: 'GEMINI',
-    env,
-    codexRealBin,
-    now,
-  }));
-  pushProfile(profiles, buildPresetOpenAICompatibleProfile({
-    presetId: 'iflow',
-    prefix: 'IFLOW',
-    env,
-    codexRealBin,
-    now,
-  }));
+  })) {
+    pushProfile(profiles, profile);
+  }
   pushProfile(profiles, buildCustomOpenAICompatibleProfile({
     env,
     codexRealBin,
@@ -351,6 +336,68 @@ function buildCustomOpenAICompatibleProfile({
   });
 }
 
+function buildCustomOpenAICompatibleProfiles({
+  env,
+  codexRealBin,
+  now,
+}: {
+  env: NodeJS.ProcessEnv;
+  codexRealBin: string;
+  now: number;
+}): CodexProviderProfile[] {
+  return parseCustomOpenAICompatibleProfileConfigs(env.CODEX_COMPAT_PROFILES_JSON)
+    .map((rawProfile) => buildCustomOpenAICompatibleProfileFromConfig({
+      rawProfile,
+      env,
+      codexRealBin,
+      now,
+    }))
+    .filter((profile): profile is CodexProviderProfile => profile !== null);
+}
+
+function buildCustomOpenAICompatibleProfileFromConfig({
+  rawProfile,
+  env,
+  codexRealBin,
+  now,
+}: {
+  rawProfile: CustomOpenAICompatibleProfileConfig;
+  env: NodeJS.ProcessEnv;
+  codexRealBin: string;
+  now: number;
+}): CodexProviderProfile | null {
+  const id = normalizeString(rawProfile.id);
+  const baseUrl = normalizeString(rawProfile.baseUrl);
+  const defaultModel = normalizeString(rawProfile.defaultModel) ?? normalizeString(rawProfile.model);
+  if (!id || !baseUrl || !defaultModel) {
+    return null;
+  }
+  const preset = getOpenAICompatibleProviderPreset(
+    normalizeString(rawProfile.capabilityPreset) ?? normalizeString(rawProfile.capabilities),
+  );
+  const apiKeyEnv = normalizeString(rawProfile.apiKeyEnv) ?? `${toEnvToken(id)}_API_KEY`;
+  return buildOpenAICompatibleProfile({
+    id,
+    displayName: normalizeString(rawProfile.displayName)
+      ?? normalizeString(rawProfile.providerName)
+      ?? id,
+    cliBin: codexRealBin,
+    launchCommand: normalizeString(env.CODEX_APP_LAUNCH_CMD),
+    autolaunch: parseBoolean(env.CODEX_APP_AUTOLAUNCH, false),
+    apiKeyEnv,
+    baseUrl,
+    defaultModel,
+    providerLabel: normalizeString(rawProfile.providerLabel) ?? id,
+    upstreamChatCompletionsPath: normalizeString(rawProfile.upstreamChatCompletionsPath)
+      ?? preset.upstreamChatCompletionsPath,
+    ownedBy: normalizeString(rawProfile.ownedBy) ?? preset.ownedBy,
+    modelIds: parseFlexibleStringList(rawProfile.modelIds, preset.modelIds),
+    modelCatalogPath: normalizeString(rawProfile.modelCatalogPath),
+    capabilities: mergeOpenAICompatibleProviderCapabilities(preset.capabilities),
+    now,
+  });
+}
+
 function buildLegacyOpenAICompatibleProfile({
   env,
   codexRealBin,
@@ -478,6 +525,29 @@ function parseCommaList(value: unknown, fallback: string[]): string[] {
   return parsed.length > 0 ? parsed : [...fallback];
 }
 
+function parseFlexibleStringList(value: unknown, fallback: string[]): string[] {
+  if (Array.isArray(value)) {
+    const parsed = value.map((entry) => normalizeString(entry)).filter(Boolean);
+    return parsed.length > 0 ? parsed : [...fallback];
+  }
+  return parseCommaList(value, fallback);
+}
+
+function parseCustomOpenAICompatibleProfileConfigs(value: unknown): CustomOpenAICompatibleProfileConfig[] {
+  const normalized = normalizeString(value);
+  if (!normalized) {
+    return [];
+  }
+  try {
+    const parsed = JSON.parse(normalized);
+    return Array.isArray(parsed)
+      ? parsed.filter((entry): entry is CustomOpenAICompatibleProfileConfig => Boolean(entry) && typeof entry === 'object')
+      : [];
+  } catch {
+    return [];
+  }
+}
+
 function buildRetryCapabilitiesFromEnv(
   prefix: string,
   env: NodeJS.ProcessEnv,
@@ -546,6 +616,15 @@ function resolveAgentModelFallbackForBaseUrl(env: NodeJS.ProcessEnv, baseUrl: st
     return null;
   }
   return normalizeString(env.CODEXBRIDGE_AGENT_MODEL);
+}
+
+function toEnvToken(value: string): string {
+  return value
+    .trim()
+    .replace(/[^A-Za-z0-9]+/gu, '_')
+    .replace(/^_+|_+$/gu, '')
+    .replace(/_+/gu, '_')
+    .toUpperCase();
 }
 
 function resolveConfiguredCommand(

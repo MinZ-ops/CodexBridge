@@ -4,6 +4,7 @@ import {
   buildOpenAICompatibleExternalModelCatalog,
   getOpenAICompatibleProviderPreset,
   mergeOpenAICompatibleProviderCapabilities,
+  OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS,
   resolveOpenAICompatibleProviderCapabilitiesForModel,
   resolveReasoningEffortForProvider,
 } from '../src/index.js';
@@ -13,6 +14,9 @@ test('capability presets are exported from the package boundary', () => {
   assert.equal(preset.id, 'minimax');
   assert.equal(preset.defaultModel, 'MiniMax-M2.7');
   assert.equal(preset.capabilities?.modelCapabilities?.['MiniMax-M2.7']?.parallelToolCalls, false);
+  const qwenRegistration = OPENAI_COMPATIBLE_PROFILE_PRESET_REGISTRATIONS.find((entry) => entry.presetId === 'qwen');
+  assert.equal(qwenRegistration?.envPrefix, 'QWEN');
+  assert.equal(qwenRegistration?.alternativeApiKeyEnv, 'DASHSCOPE_API_KEY');
 });
 
 test('external model catalogs merge model-level capabilities', () => {
