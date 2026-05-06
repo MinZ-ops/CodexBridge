@@ -199,32 +199,32 @@ Phase 0 source-of-truth inventory:
 
 Create the core durable mission model.
 
-- [ ] Add `MissionStatus`, `MissionSource`, and `MissionPriority` types
-- [ ] Add `Mission`, `MissionAttempt`, `MissionEvent`, and `MissionWorkpad` types
-- [ ] Add explicit state transition helpers
-- [ ] Add a persistence port:
+- [x] Add `MissionStatus`, `MissionSource`, and `MissionPriority` types
+- [x] Add `Mission`, `MissionAttempt`, `MissionEvent`, and `MissionWorkpad` types
+- [x] Add explicit state transition helpers
+- [x] Add a persistence port:
   - `MissionStore`
   - `MissionAttemptStore`
   - `MissionEventStore`
   - or one combined `MissionRepository`
-- [ ] Add a first local persistence implementation using the existing CodexBridge
+- [x] Add a first local persistence implementation using the existing CodexBridge
   storage style
-- [ ] Persist enough state to recover after process restart:
+- [x] Persist enough state to recover after process restart:
   - mission
   - attempt
   - workpad
   - event log
   - lease/lock
   - pending approval/block reason
-- [ ] Add one authority for runtime state ownership instead of splitting active
+- [x] Add one authority for runtime state ownership instead of splitting active
   mission state across ad hoc background-job records
 
 Completion criteria:
 
-- [ ] A mission can be created, listed, read, updated, and stopped without
+- [x] A mission can be created, listed, read, updated, and stopped without
   starting a provider run
-- [ ] State transitions are explicit and testable
-- [ ] Restart recovery can identify resumable missions
+- [x] State transitions are explicit and testable
+- [x] Restart recovery can identify resumable missions
 
 ## Phase 2: Workflow and Workpad
 

@@ -31,8 +31,9 @@ It must not own bridge behavior:
 
 Current phase:
 
-- `phase-0-bootstrap`: package boundary, ownership contract, package scripts,
-  and boundary checks only
+- `phase-1-domain-persistence`: package boundary plus durable mission domain,
+  explicit state transitions, repository ports, and first local JSON
+  persistence
 
 This package should preserve the Symphony-style separation between:
 

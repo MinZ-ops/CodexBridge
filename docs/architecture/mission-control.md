@@ -786,34 +786,34 @@ should not own mission state.
 
 ## Implementation Plan
 
-### Phase 0: Create an internal package boundary
+### Phase 0: Baseline current `/agent` and `/auto` behavior
 
-- Create `packages/mission-control` as an internal TypeScript package.
-- Add root scripts similar to `codex-gateway`:
-  - `mission-control:typecheck`
-  - `mission-control:test`
-  - `mission-control:build`
-  - `mission-control:check-boundary`
-- Keep the package in the same repository; do **not** add a workspace unless
-  multiple internal packages start needing separate dependency/version flows.
-- Make `CodexBridge -> @codexbridge/mission-control` the only dependency
-  direction.
+- Treat current `/agent` and `/auto` user-visible behavior as migration
+  protected.
+- Keep the command-skill contracts and bridge tests as the authoritative
+  baseline while Mission Control grows underneath them.
+- Do not change user-facing semantics just to make the runtime abstraction
+  cleaner.
 
-### Phase 1: Make `/agent` the Mission v0 surface
+### Phase 1: Add domain and persistence
 
-- Keep `/agent` as the user-facing command.
-- Add Mission terminology to docs and help text without adding a new slash
-  command yet.
-- Extend current `AgentJob` integration only enough to create/read mission runs.
-- Preserve current WeChat behavior while shifting ownership of runner state into
-  Mission Control.
+- Keep `packages/mission-control` as the internal TypeScript package boundary.
+- Add durable mission domain types:
+  - mission
+  - attempt
+  - event
+  - workpad
+  - lease / pending approval state
+- Add explicit mission state transitions.
+- Add a first local JSON-backed persistence implementation.
+- Make restart recovery and resumable-mission detection testable before adding
+  provider execution.
 
-### Phase 2: Add workflow, workpad, and mission persistence
+### Phase 2: Add workflow and workpad
 
 - Add `MissionWorkflowLoader` for `.codexbridge/mission/WORKFLOW.md`.
 - Parse YAML front matter plus prompt body.
-- Add mission, attempt, and event persistence.
-- Add persistent workpad snapshots.
+- Keep workflow policy outside slash-command handlers.
 - Show workflow source and workpad summary in `/agent show`.
 
 ### Phase 3: Add workspace isolation and recovery-safe leases
@@ -824,7 +824,7 @@ should not own mission state.
 - Add runner lease/lock records so restart recovery and concurrency are safe.
 - Persist `workspacePath` and environment stamp.
 
-### Phase 4: Add bounded run / verify / repair loop
+### Phase 4: Add Codex provider and bounded run / verify / repair loop
 
 - Replace one-shot `/agent` execution with a loop:
   - run
