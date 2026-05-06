@@ -2,6 +2,12 @@
 
 Internal package for the Codex Gateway protocol layer.
 
+Current release policy:
+
+- keep this package `private: true`
+- keep the export surface minimal while the API boundary stabilizes
+- only revisit npm publication after live-provider coverage and CodexBridge integration contracts are stable
+
 Immutable target:
 
 > `@codexbridge/codex-gateway` lets Codex run on non-OpenAI and

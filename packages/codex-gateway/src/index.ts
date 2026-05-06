@@ -1,6 +1,8 @@
 export const CODEX_GATEWAY_PACKAGE_NAME = '@codexbridge/codex-gateway' as const;
 
-export const CODEX_GATEWAY_PACKAGE_PHASE = 'phase-4-contracts' as const;
+export const CODEX_GATEWAY_PACKAGE_PHASE = 'phase-5-internal-package' as const;
+
+export const CODEX_GATEWAY_RELEASE_CHANNEL = 'internal-only' as const;
 
 export const CODEX_GATEWAY_OWNS = [
   'responses-to-chat-conversion',

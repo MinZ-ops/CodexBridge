@@ -252,6 +252,12 @@ first, then become a publishable npm package only after its API boundary is
 stable. The package target is broader than CodexBridge: it should help Codex run
 on OpenAI-compatible model providers.
 
+Current Phase 5 decision:
+
+- keep `@codexbridge/codex-gateway` internal-only (`private: true`) for now
+- keep the package export surface minimal while live-provider coverage and CodexBridge integration contracts are still settling
+- only revisit publication after the protocol boundary is demonstrably stable
+
 Target dependency direction:
 
 ```text

@@ -65,7 +65,7 @@ Avoid frequent edits here unless the change is truly cross-cutting:
 - [ ] Finish live-provider smoke coverage for OpenRouter once credentials are available
 - [x] Keep new provider onboarding config-first and capability-driven instead of adding one-off provider classes
 - [x] Keep package ownership strictly at protocol/gateway level
-- [ ] Decide whether Phase 5 should remain internal-only or move toward publishable package form
+- [x] Decide whether Phase 5 should remain internal-only or move toward publishable package form
 
 Latest progress:
 
@@ -77,6 +77,7 @@ Latest progress:
 - [x] Custom compatible provider definitions can now embed `modelCatalog` directly, so provider onboarding can stay config-first even without a separate catalog file
 - [x] Custom compatible profile JSON ignores invalid entries while preserving existing built-in preset, single-profile, and legacy config paths
 - [x] `scripts/check-codex-gateway-boundary.mjs` now enforces that legacy bridge-side shim files stay pure re-exports into `packages/codex-gateway`
+- [x] Package public-surface tests now lock `@codexbridge/codex-gateway` to an internal-only release channel (`private: true` + minimal exports/files) until the API boundary and live-provider matrix are stable
 
 ## Packaging Direction
 
@@ -93,6 +94,7 @@ Rules:
 - `@codexbridge/codex-gateway -X-> CodexBridge core/platform/runtime/store/i18n`
 - No workspace/monorepo conversion is required yet
 - Legacy CodexBridge provider paths may remain re-export shims during migration
+- Phase 5 decision on 2026-05-06: keep the package internal-only for now; do not widen npm/public surface until live-provider coverage and integration contracts are stable
 
 ## Migration Plan
 
@@ -189,7 +191,7 @@ Frozen migration surface:
 
 ### Phase 5: Publish decision
 
-- [ ] Decide whether to publish as `@codexbridge/codex-gateway`; keep it private/internal until the API boundary is stable
+- [x] Decide whether to publish as `@codexbridge/codex-gateway`; keep it private/internal until the API boundary is stable
 - [ ] Optionally add a standalone HTTP proxy binary only after the package is stable. The first product target remains CodexBridge integration, not a public gateway
 
 ## Reference Usage
