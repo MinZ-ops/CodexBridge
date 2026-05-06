@@ -7781,6 +7781,213 @@ test('/agent show, retry, rename, stop, and delete manage queued jobs', async ()
   }
 });
 
+test('/agent list, show, result, stop, and retry prefer Mission Control runtime state over stale compatibility fields', async () => {
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    const { runtime } = makeRuntime({ defaultCwd: '/repo' });
+    await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent 汇总当前修复进展并给出最终结论',
+    });
+    await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent confirm',
+    });
+
+    const [job] = runtime.services.agentJobs.listForScope({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+    });
+    assert.ok(job);
+    const session = runtime.services.bridgeSessions.getSessionById(job.bridgeSessionId);
+    const missionUpdatedAt = Date.now();
+    const attemptId = `${job.id}-mission-attempt-1`;
+    const completedState = {
+      mission: {
+        id: job.id,
+        source: 'weixin',
+        sourceRef: job.id,
+        platform: job.platform,
+        externalScopeId: job.externalScopeId,
+        title: job.title,
+        goal: job.goal,
+        expectedOutput: job.expectedOutput,
+        acceptanceCriteria: [job.expectedOutput],
+        plan: [...job.plan],
+        status: 'completed',
+        priority: 'normal',
+        riskLevel: job.riskLevel,
+        cwd: job.cwd,
+        workspacePath: null,
+        workflowPath: null,
+        providerProfileId: job.providerProfileId,
+        bridgeSessionId: job.bridgeSessionId,
+        codexThreadId: session?.codexThreadId ?? null,
+        activeAttemptId: attemptId,
+        attemptCount: 1,
+        maxAttempts: job.maxAttempts,
+        maxTurns: 8,
+        lastRunAt: missionUpdatedAt - 500,
+        completedAt: missionUpdatedAt,
+        archivedAt: null,
+        stoppedAt: null,
+        lastResultPreview: 'Mission Control 已完成结果。',
+        resultText: 'Mission Control 已完成结果。\n\n验证通过，所有验收项已满足。',
+        resultArtifacts: [],
+        lastError: null,
+        statusReason: '修复已通过验证。',
+        pendingApproval: null,
+        lease: null,
+        workpad: {
+          summary: 'Mission Control 最终摘要。',
+          latestPlan: [...job.plan],
+          latestBlocker: null,
+          latestVerifierSummary: '修复已通过验证。',
+          finalResultSummary: 'Mission Control 已完成结果。',
+          notes: [],
+          updatedAt: missionUpdatedAt,
+        },
+        createdAt: job.createdAt,
+        updatedAt: missionUpdatedAt,
+      },
+      attempts: [
+        {
+          id: attemptId,
+          missionId: job.id,
+          index: 1,
+          status: 'completed',
+          providerRunId: 'provider-run-1',
+          providerThreadId: session?.codexThreadId ?? null,
+          promptDigest: 'digest-1',
+          verifierVerdict: 'complete',
+          verifierSummary: '修复已通过验证。',
+          missingAcceptanceCriteria: [],
+          outputPreview: 'Mission Control 已完成结果。',
+          error: null,
+          startedAt: missionUpdatedAt - 500,
+          endedAt: missionUpdatedAt,
+          createdAt: missionUpdatedAt - 600,
+          updatedAt: missionUpdatedAt,
+        },
+      ],
+      events: [],
+    };
+    runtime.services.agentJobs.updateJob(job.id, {
+      status: 'queued',
+      running: false,
+      attemptCount: 0,
+      lastRunAt: null,
+      completedAt: null,
+      lastResultPreview: 'stale preview',
+      resultText: 'stale wrong result',
+      resultArtifacts: null,
+      lastError: 'stale error',
+      verificationSummary: 'stale verification',
+      missionWorkpadLatestBlocker: 'stale blocker',
+      missionWorkpadLatestVerifierSummary: 'stale verifier',
+      missionWorkpadFinalResultSummary: 'stale final summary',
+      missionAttemptHistory: [],
+      missionRuntimeState: completedState,
+    });
+
+    const listed = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent',
+    });
+    const listedText = listed.messages.map((message) => message.text).join('\n');
+    assert.match(listedText, /状态：已完成/);
+    assert.match(listedText, /Mission Control 已完成结果。/);
+    assert.doesNotMatch(listedText, /stale preview/);
+
+    const showCompleted = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent show 1',
+    });
+    const showCompletedText = showCompleted.messages.map((message) => message.text).join('\n');
+    assert.match(showCompletedText, /Mission Control 最终摘要。/);
+    assert.match(showCompletedText, /修复已通过验证。/);
+    assert.doesNotMatch(showCompletedText, /stale verification/);
+
+    const result = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent result 1',
+    });
+    const resultText = result.messages.map((message) => message.text).join('\n');
+    assert.match(resultText, /Mission Control 已完成结果。/);
+    assert.match(resultText, /所有验收项已满足。/);
+    assert.doesNotMatch(resultText, /stale wrong result/);
+
+    const waitingUserState = structuredClone(completedState);
+    (waitingUserState.mission as Record<string, unknown>).status = 'waiting_user';
+    (waitingUserState.mission as Record<string, unknown>).completedAt = null;
+    (waitingUserState.mission as Record<string, unknown>).statusReason = '等待用户确认。';
+    (waitingUserState.mission as Record<string, unknown>).lastError = '等待用户确认。';
+    (waitingUserState.mission as Record<string, unknown>).workpad = {
+      ...(waitingUserState.mission as any).workpad,
+      latestBlocker: '等待用户确认。',
+      latestVerifierSummary: '等待用户确认。',
+      updatedAt: missionUpdatedAt + 1,
+    };
+    (waitingUserState.mission as Record<string, unknown>).updatedAt = missionUpdatedAt + 1;
+    (waitingUserState.attempts[0] as Record<string, unknown>).status = 'waiting_user';
+    (waitingUserState.attempts[0] as Record<string, unknown>).endedAt = null;
+    (waitingUserState.attempts[0] as Record<string, unknown>).updatedAt = missionUpdatedAt + 1;
+    runtime.services.agentJobs.updateJob(job.id, {
+      status: 'completed',
+      running: false,
+      stopRequested: false,
+      missionRuntimeState: waitingUserState,
+    });
+
+    const stopped = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent stop 1',
+    });
+    assert.match(stopped.messages.map((message) => message.text).join('\n'), /Agent 任务已请求停止/);
+
+    const showStopped = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent show 1',
+    });
+    const showStoppedText = showStopped.messages.map((message) => message.text).join('\n');
+    assert.match(showStoppedText, /状态：已停止/);
+
+    const retried = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent retry 1',
+    });
+    assert.match(retried.messages.map((message) => message.text).join('\n'), /Agent 任务已重新排队/);
+
+    const retriedJob = runtime.services.agentJobs.getById(job.id);
+    assert.equal((retriedJob?.missionRuntimeState?.mission as Record<string, unknown> | null)?.status, 'queued');
+    assert.equal(retriedJob?.missionRuntimeState?.attempts.length ?? -1, 0);
+
+    const showRetried = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-mission-state-1',
+      text: '/agent show 1',
+    });
+    const showRetriedText = showRetried.messages.map((message) => message.text).join('\n');
+    assert.match(showRetriedText, /状态：排队中/);
+    assert.doesNotMatch(showRetriedText, /所有验收项已满足。/);
+  } finally {
+    if (originalOpenAiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalOpenAiKey;
+    }
+  }
+});
+
 test('/agent runAgentJob retries after an interrupted provider turn and completes on the next attempt', async () => {
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;

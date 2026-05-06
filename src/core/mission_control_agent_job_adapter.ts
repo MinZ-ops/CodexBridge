@@ -1,28 +1,61 @@
 import {
   MissionWorkflowLoader,
+  createMission,
   createMissionAttemptPromptContract,
   createMissionWorkpadStatusView,
   renderMissionAttemptPromptContract,
+  transitionMission,
   type LoadedMissionWorkflow,
   type Mission,
   type MissionAttempt,
   type MissionAttemptStatus,
+  type MissionEvent,
   type MissionStatus,
 } from '../../packages/mission-control/src/index.js';
 import type {
   AgentJob,
   AgentJobAttemptHistoryEntry,
+  AgentJobMissionRuntimeState,
   AgentJobStatus,
+  TurnArtifactDeliveredItem,
 } from '../types/core.js';
 
 const workflowLoader = new MissionWorkflowLoader();
+const ACTIVE_MISSION_JOB_STATUS_SET = new Set<MissionStatus>([
+  'planning',
+  'running',
+  'verifying',
+  'repairing',
+]);
+const TERMINAL_MISSION_JOB_STATUS_SET = new Set<MissionStatus>([
+  'completed',
+  'failed',
+  'stopped',
+  'archived',
+]);
+const TERMINAL_ATTEMPT_STATUS_SET = new Set<MissionAttempt['status']>([
+  'completed',
+  'failed',
+  'stopped',
+  'waiting_user',
+  'needs_human',
+  'handoff',
+  'blocked',
+]);
+
+export interface AgentJobMissionRuntimeStateView {
+  mission: Mission | null;
+  attempts: MissionAttempt[];
+  events: MissionEvent[];
+}
 
 export function loadMissionWorkflowForAgentJob(job: AgentJob):
   | { workflow: LoadedMissionWorkflow; error: null }
   | { workflow: null; error: Error } {
+  const effectiveJob = createMissionControlledAgentJobView(job);
   const result = workflowLoader.tryLoad({
-    explicitPath: job.missionWorkflowPath ?? undefined,
-    cwd: job.cwd,
+    explicitPath: effectiveJob.missionWorkflowPath ?? undefined,
+    cwd: effectiveJob.cwd,
   });
   if (result.workflow) {
     return result;
@@ -41,12 +74,13 @@ export function buildMissionControlledAgentExecutionPrompt(job: AgentJob, params
   workflow: LoadedMissionWorkflow;
   locale: string | null;
 }): string {
-  const mission = createMissionFromAgentJob(job, {
+  const effectiveJob = createMissionControlledAgentJobView(job);
+  const mission = createMissionFromAgentJob(effectiveJob, {
     workflow: params.workflow,
     latestBlocker: params.previousVerificationSummary,
     notes: buildPromptNotes(params.previousVerificationIssues, params.previousResultPreview),
   });
-  const attempt = createSyntheticAttempt(job, params.attempt, 'running');
+  const attempt = createSyntheticAttempt(effectiveJob, params.attempt, 'running');
   const contract = createMissionAttemptPromptContract({
     mission,
     attempt,
@@ -61,15 +95,194 @@ export function buildMissionControlledAgentExecutionPrompt(job: AgentJob, params
 }
 
 export function createAgentJobStatusView(job: AgentJob, workflow: LoadedMissionWorkflow | null) {
-  const mission = createMissionFromAgentJob(job, {
-    workflow,
-    latestBlocker: job.missionWorkpadLatestBlocker,
-  });
+  const effectiveJob = createMissionControlledAgentJobView(job);
+  const state = loadAgentJobMissionRuntimeState(job);
+  const mission = state.mission
+    ? applyWorkflowMetadataToMission(state.mission, workflow)
+    : createMissionFromAgentJob(effectiveJob, {
+      workflow,
+      latestBlocker: effectiveJob.missionWorkpadLatestBlocker,
+    });
+  const attempts = state.attempts.length > 0
+    ? state.attempts.map((attempt) => cloneValue(attempt))
+    : effectiveJob.missionAttemptHistory.map((entry) => createSyntheticAttemptFromHistory(effectiveJob, entry));
   return createMissionWorkpadStatusView({
     mission,
-    attempts: job.missionAttemptHistory.map((entry) => createSyntheticAttemptFromHistory(job, entry)),
+    attempts,
     workflow,
   });
+}
+
+export function createMissionControlledAgentJobView(job: AgentJob): AgentJob {
+  const state = loadAgentJobMissionRuntimeState(job);
+  const mission = state.mission;
+  if (!mission) {
+    return cloneValue(job);
+  }
+  const resultArtifacts = mapMissionArtifactsToAgentArtifacts(mission.resultArtifacts);
+  const attemptHistory = state.attempts.length > 0
+    ? buildAttemptHistoryFromMissionAttempts(state.attempts)
+    : job.missionAttemptHistory;
+  return {
+    ...cloneValue(job),
+    title: compactString(mission.title) ?? job.title,
+    goal: compactString(mission.goal) ?? job.goal,
+    expectedOutput: compactString(mission.expectedOutput) ?? job.expectedOutput,
+    plan: mission.plan.length > 0 ? [...mission.plan] : [...job.plan],
+    riskLevel: mission.riskLevel ?? job.riskLevel,
+    providerProfileId: compactString(mission.providerProfileId) ?? job.providerProfileId,
+    bridgeSessionId: compactString(mission.bridgeSessionId) ?? job.bridgeSessionId,
+    cwd: mission.cwd ?? job.cwd,
+    status: mapMissionStatusToAgentJobStatus(mission.status),
+    running: ACTIVE_MISSION_JOB_STATUS_SET.has(mission.status),
+    stopRequested: mission.status === 'stopped',
+    maxAttempts: mission.maxAttempts,
+    attemptCount: mission.attemptCount,
+    lastRunAt: mission.lastRunAt,
+    completedAt: TERMINAL_MISSION_JOB_STATUS_SET.has(mission.status)
+      ? (mission.completedAt ?? mission.stoppedAt ?? mission.updatedAt)
+      : null,
+    lastResultPreview: summarizeMissionPreview(mission.lastResultPreview, mission.resultArtifacts) ?? job.lastResultPreview,
+    resultText: compactString(mission.resultText) ?? job.resultText ?? null,
+    resultArtifacts,
+    lastError: compactString(mission.lastError) ?? compactString(mission.statusReason) ?? job.lastError,
+    verificationSummary: compactString(mission.workpad.latestVerifierSummary)
+      ?? compactString(mission.statusReason)
+      ?? job.verificationSummary,
+    missionWorkflowPath: mission.workflowPath ?? job.missionWorkflowPath,
+    missionWorkflowSourceLabel: mission.workflowPath
+      ? `configured workflow (${mission.workflowPath})`
+      : job.missionWorkflowSourceLabel,
+    missionWorkpadLatestBlocker: compactString(mission.workpad.latestBlocker) ?? job.missionWorkpadLatestBlocker,
+    missionWorkpadLatestVerifierSummary: compactString(mission.workpad.latestVerifierSummary)
+      ?? job.missionWorkpadLatestVerifierSummary,
+    missionWorkpadFinalResultSummary: compactString(mission.workpad.finalResultSummary)
+      ?? compactString(mission.lastResultPreview)
+      ?? job.missionWorkpadFinalResultSummary,
+    missionAttemptHistory: attemptHistory,
+    updatedAt: Math.max(job.updatedAt, mission.updatedAt),
+  };
+}
+
+export function loadAgentJobMissionRuntimeState(job: AgentJob): AgentJobMissionRuntimeStateView {
+  const raw = job.missionRuntimeState;
+  return {
+    mission: raw?.mission ? cloneValue(raw.mission as unknown as Mission) : null,
+    attempts: Array.isArray(raw?.attempts)
+      ? raw.attempts.map((attempt) => cloneValue(attempt as unknown as MissionAttempt))
+      : [],
+    events: Array.isArray(raw?.events)
+      ? raw.events.map((event) => cloneValue(event as unknown as MissionEvent))
+      : [],
+  };
+}
+
+export function serializeAgentJobMissionRuntimeState(
+  state: AgentJobMissionRuntimeStateView,
+): AgentJobMissionRuntimeState {
+  return {
+    mission: state.mission ? (cloneValue(state.mission) as unknown as Record<string, unknown>) : null,
+    attempts: state.attempts.map((attempt) => cloneValue(attempt) as unknown as Record<string, unknown>),
+    events: state.events.map((event) => cloneValue(event) as unknown as Record<string, unknown>),
+  };
+}
+
+export function createFreshMissionRuntimeStateForAgentJob(
+  job: AgentJob,
+  options: {
+    now?: number;
+    codexThreadId?: string | null;
+  } = {},
+): AgentJobMissionRuntimeStateView {
+  const now = options.now ?? Date.now();
+  return {
+    mission: transitionMission(createMission({
+      id: job.id,
+      source: mapPlatformToMissionSource(job.platform),
+      sourceRef: job.id,
+      platform: job.platform,
+      externalScopeId: job.externalScopeId,
+      title: job.title,
+      goal: job.goal,
+      expectedOutput: job.expectedOutput,
+      acceptanceCriteria: job.expectedOutput ? [job.expectedOutput] : [],
+      plan: [...job.plan],
+      riskLevel: job.riskLevel,
+      cwd: job.cwd,
+      workflowPath: job.missionWorkflowPath ?? null,
+      providerProfileId: job.providerProfileId,
+      bridgeSessionId: job.bridgeSessionId,
+      codexThreadId: options.codexThreadId ?? null,
+      maxAttempts: job.maxAttempts,
+      maxTurns: 8,
+      now,
+    }), 'queued', {
+      at: now,
+      reason: 'Agent mission queued through the bridge adapter.',
+    }),
+    attempts: [],
+    events: [],
+  };
+}
+
+export function createStoppedMissionRuntimeStateForAgentJob(
+  job: AgentJob,
+  options: {
+    reason?: string | null;
+    now?: number;
+  } = {},
+): AgentJobMissionRuntimeStateView | null {
+  const state = loadAgentJobMissionRuntimeState(job);
+  if (!state.mission) {
+    return null;
+  }
+  const now = options.now ?? Date.now();
+  const reason = compactString(options.reason) ?? 'Agent job stop requested.';
+  if (
+    state.mission.status === 'completed'
+    || state.mission.status === 'failed'
+    || state.mission.status === 'archived'
+  ) {
+    return state;
+  }
+  const mission = state.mission.status === 'stopped'
+    ? {
+      ...cloneValue(state.mission),
+      updatedAt: now,
+    }
+    : transitionMission(state.mission, 'stopped', {
+      at: now,
+      reason,
+      lastError: compactString(state.mission.lastError) ?? reason,
+      activeAttemptId: state.mission.activeAttemptId,
+    });
+  return {
+    mission,
+    attempts: state.attempts.map((attempt) => {
+      if (attempt.id !== state.mission?.activeAttemptId || TERMINAL_ATTEMPT_STATUS_SET.has(attempt.status)) {
+        return cloneValue(attempt);
+      }
+      return {
+        ...cloneValue(attempt),
+        status: 'stopped',
+        error: reason,
+        endedAt: attempt.endedAt ?? now,
+        updatedAt: now,
+      };
+    }),
+    events: state.events.map((event) => cloneValue(event)),
+  };
+}
+
+function applyWorkflowMetadataToMission(
+  mission: Mission,
+  workflow: LoadedMissionWorkflow | null,
+): Mission {
+  const next = cloneValue(mission);
+  if (workflow?.source.path) {
+    next.workflowPath = workflow.source.path;
+  }
+  return next;
 }
 
 function createMissionFromAgentJob(
@@ -178,6 +391,19 @@ function createSyntheticAttemptFromHistory(job: AgentJob, entry: AgentJobAttempt
   };
 }
 
+function buildAttemptHistoryFromMissionAttempts(attempts: MissionAttempt[]): AgentJobAttemptHistoryEntry[] {
+  return [...attempts]
+    .sort((left, right) => left.index - right.index)
+    .map((attempt) => ({
+      attempt: attempt.index,
+      status: mapMissionAttemptStatusToAgentJobStatus(attempt.status),
+      verifierSummary: attempt.verifierSummary,
+      outputPreview: attempt.outputPreview,
+      error: attempt.error,
+      recordedAt: attempt.endedAt ?? attempt.updatedAt,
+    }));
+}
+
 function mapPlatformToMissionSource(platform: string): Mission['source'] {
   if (platform === 'weixin' || platform === 'telegram') {
     return platform;
@@ -190,6 +416,45 @@ function mapAgentStatusToMissionStatus(status: AgentJobStatus, running: boolean)
     return status === 'planning' ? 'planning' : 'running';
   }
   return status;
+}
+
+function mapMissionStatusToAgentJobStatus(status: MissionStatus): AgentJobStatus {
+  switch (status) {
+    case 'draft':
+      return 'queued';
+    case 'queued':
+    case 'planning':
+    case 'running':
+    case 'verifying':
+    case 'repairing':
+    case 'waiting_user':
+    case 'needs_human':
+    case 'handoff':
+    case 'blocked':
+    case 'completed':
+    case 'failed':
+    case 'stopped':
+      return status;
+    case 'archived':
+      return 'completed';
+  }
+}
+
+function mapMissionAttemptStatusToAgentJobStatus(status: MissionAttempt['status']): AgentJobStatus {
+  switch (status) {
+    case 'queued':
+    case 'running':
+    case 'verifying':
+    case 'repairing':
+    case 'waiting_user':
+    case 'needs_human':
+    case 'handoff':
+    case 'blocked':
+    case 'completed':
+    case 'failed':
+    case 'stopped':
+      return status;
+  }
 }
 
 function inferVerifierVerdict(
@@ -259,4 +524,46 @@ function mapAgentStatusToMissionAttemptStatus(status: AgentJobStatus): MissionAt
     default:
       return 'queued';
   }
+}
+
+function mapMissionArtifactsToAgentArtifacts(value: unknown[]): TurnArtifactDeliveredItem[] | null {
+  const normalized = value
+    .map((artifact) => {
+      const record = artifact as Record<string, unknown> | null;
+      const type = compactString(record?.type);
+      const artifactPath = compactString(record?.path);
+      if (!type || !artifactPath) {
+        return null;
+      }
+      return {
+        kind: type === 'other' ? 'file' : (type as TurnArtifactDeliveredItem['kind']),
+        path: artifactPath,
+        displayName: compactString(record?.name),
+        mimeType: compactString(record?.mimeType),
+        sizeBytes: null,
+        caption: compactString(record?.caption),
+        source: 'provider_native' as const,
+        turnId: null,
+      };
+    })
+    .filter(Boolean) as TurnArtifactDeliveredItem[];
+  return normalized.length > 0 ? normalized : null;
+}
+
+function summarizeMissionPreview(value: string | null, artifacts: unknown[]): string | null {
+  const text = compactString(value);
+  if (text) {
+    return text.length > 180 ? `${text.slice(0, 179)}…` : text;
+  }
+  const artifactCount = Array.isArray(artifacts) ? artifacts.length : 0;
+  return artifactCount > 0 ? `attachments: ${artifactCount}` : null;
+}
+
+function compactString(value: unknown): string | null {
+  const normalized = String(value ?? '').trim();
+  return normalized.length > 0 ? normalized : null;
+}
+
+function cloneValue<T>(value: T): T {
+  return structuredClone(value);
 }

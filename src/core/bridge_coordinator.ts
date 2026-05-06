@@ -12,6 +12,7 @@ import {
   type AssistantRecordDraft,
 } from './assistant_record_service.js';
 import {
+  createMissionControlledAgentJobView,
   createAgentJobStatusView,
   loadMissionWorkflowForAgentJob,
 } from './mission_control_agent_job_adapter.js';
@@ -6015,7 +6016,7 @@ export class BridgeCoordinator {
 
   handleAgentListCommand(event) {
     const scopeRef = toScopeRef(event);
-    const jobs = this.agentJobs.listForScope(scopeRef);
+    const jobs = this.agentJobs.listForScope(scopeRef).map((job) => createMissionControlledAgentJobView(job));
     if (jobs.length === 0) {
       return messageResponse([
         this.t('coordinator.agent.listTitle', { count: 0 }),
@@ -6060,7 +6061,7 @@ export class BridgeCoordinator {
         this.t('coordinator.agent.notFound', { value: token || '?' }),
       ], this.buildScopedSessionMeta(event));
     }
-    const job = resolved.job;
+    const job = createMissionControlledAgentJobView(resolved.job);
     const workflowLoadResult = loadMissionWorkflowForAgentJob(job);
     const workflow = workflowLoadResult.workflow;
     const missionStatusView = createAgentJobStatusView(job, workflow);
@@ -6119,21 +6120,23 @@ export class BridgeCoordinator {
         this.t('coordinator.agent.notFound', { value: token || '?' }),
       ], this.buildScopedSessionMeta(event));
     }
-    const resultText = await this.resolveAgentJobResultText(resolved.job);
+    const rawJob = resolved.job;
+    const job = createMissionControlledAgentJobView(rawJob);
+    const resultText = await this.resolveAgentJobResultText(job);
     if (!resultText) {
       return messageResponse([
         this.t('coordinator.agent.noResultText'),
-        this.t('coordinator.agent.title', { value: resolved.job.title }),
+        this.t('coordinator.agent.title', { value: job.title }),
       ], this.buildScopedSessionMeta(event));
     }
-    const isPreviewOnly = isAgentResultPreviewOnly(resolved.job, resultText);
-    if (!resolved.job.resultText || isAgentResultPreviewOnly(resolved.job, resolved.job.resultText)) {
-      this.agentJobs.updateJob(resolved.job.id, {
+    const isPreviewOnly = isAgentResultPreviewOnly(job, resultText);
+    if (!rawJob.resultText || isAgentResultPreviewOnly(rawJob, rawJob.resultText)) {
+      this.agentJobs.updateJob(rawJob.id, {
         resultText,
       });
     }
     const normalizedAction = String(pageOrAction ?? '').trim().toLowerCase();
-    const commandToken = resolved.index ?? resolved.job.id;
+    const commandToken = resolved.index ?? job.id;
     if (['file', 'md', 'markdown', 'export'].includes(normalizedAction)) {
       if (isPreviewOnly) {
         return messageResponse([
@@ -6141,10 +6144,10 @@ export class BridgeCoordinator {
           this.t('coordinator.agent.resultRetryHint', { index: commandToken }),
         ], this.buildScopedSessionMeta(event));
       }
-      const artifact = this.createAgentResultTextArtifact(resolved.job, resultText);
-      const existingArtifacts = normalizeAgentArtifacts(resolved.job.resultArtifacts ?? null);
+      const artifact = this.createAgentResultTextArtifact(job, resultText);
+      const existingArtifacts = normalizeAgentArtifacts(job.resultArtifacts ?? null);
       if (!existingArtifacts.some((item) => item.path === artifact.path)) {
-        this.agentJobs.updateJob(resolved.job.id, {
+        this.agentJobs.updateJob(job.id, {
           resultText,
           resultArtifacts: [
             ...existingArtifacts,
@@ -6154,7 +6157,7 @@ export class BridgeCoordinator {
       }
       const response = messageResponse([
         this.t('coordinator.agent.resultFileReady'),
-        this.t('coordinator.agent.title', { value: resolved.job.title }),
+        this.t('coordinator.agent.title', { value: job.title }),
       ], this.buildScopedSessionMeta(event));
       response.messages.push({
         artifact,
@@ -6170,7 +6173,7 @@ export class BridgeCoordinator {
       : 1;
     const pageText = pages[page - 1] ?? '';
     const lines = [
-      this.t('coordinator.agent.resultTitle', { title: resolved.job.title }),
+      this.t('coordinator.agent.resultTitle', { title: job.title }),
       this.t('coordinator.agent.resultPage', { page, pages: pages.length }),
       '',
       pageText,
@@ -6189,16 +6192,17 @@ export class BridgeCoordinator {
         this.t('coordinator.agent.notFound', { value: token || '?' }),
       ], this.buildScopedSessionMeta(event));
     }
-    const artifacts = this.resolveAgentJobArtifacts(resolved.job);
+    const job = createMissionControlledAgentJobView(resolved.job);
+    const artifacts = this.resolveAgentJobArtifacts(job);
     if (artifacts.length === 0) {
       return messageResponse([
         this.t('coordinator.agent.noAttachments'),
-        this.t('coordinator.agent.title', { value: resolved.job.title }),
+        this.t('coordinator.agent.title', { value: job.title }),
       ], this.buildScopedSessionMeta(event));
     }
     const response = messageResponse([
       this.t('coordinator.agent.resendingAttachments'),
-      this.t('coordinator.agent.title', { value: resolved.job.title }),
+      this.t('coordinator.agent.title', { value: job.title }),
       this.t('coordinator.agent.attachments', { value: formatAgentArtifactSummary(artifacts, this.currentI18n) }),
     ], this.buildScopedSessionMeta(event));
     response.messages.push(...artifacts.map((artifact) => ({
@@ -6841,23 +6845,25 @@ export class BridgeCoordinator {
   }
 
   resolveAgentJobArtifacts(job: AgentJob): TurnArtifactDeliveredItem[] {
-    const direct = normalizeAgentArtifacts(job.resultArtifacts ?? null);
+    const effectiveJob = createMissionControlledAgentJobView(job);
+    const direct = normalizeAgentArtifacts(effectiveJob.resultArtifacts ?? null);
     if (direct.length > 0) {
       return direct;
     }
-    const session = this.agentJobs?.getSession?.(job) ?? this.bridgeSessions.getSessionById(job.bridgeSessionId);
+    const session = this.agentJobs?.getSession?.(effectiveJob) ?? this.bridgeSessions.getSessionById(effectiveJob.bridgeSessionId);
     const settings = session ? this.bridgeSessions.getSessionSettings(session.id) : null;
     return normalizeAgentArtifacts(resolveStoredArtifactDelivery(settings)?.deliveredArtifacts ?? null);
   }
 
   async resolveAgentJobResultText(job: AgentJob): Promise<string> {
-    const stored = stripAgentArtifactProtocol(job.resultText ?? '').trim();
-    if (stored && !isAgentResultPreviewOnly(job, stored)) {
+    const effectiveJob = createMissionControlledAgentJobView(job);
+    const stored = stripAgentArtifactProtocol(effectiveJob.resultText ?? '').trim();
+    if (stored && !isAgentResultPreviewOnly(effectiveJob, stored)) {
       return stored;
     }
-    const session = this.agentJobs?.getSession?.(job) ?? this.bridgeSessions.getSessionById(job.bridgeSessionId);
+    const session = this.agentJobs?.getSession?.(effectiveJob) ?? this.bridgeSessions.getSessionById(effectiveJob.bridgeSessionId);
     if (!session) {
-      return stored || String(job.lastResultPreview ?? '').trim();
+      return stored || String(effectiveJob.lastResultPreview ?? '').trim();
     }
     try {
       const thread = await this.bridgeSessions.readProviderThread(
@@ -6866,17 +6872,17 @@ export class BridgeCoordinator {
         { includeTurns: true },
       );
       const recovered = stripAgentArtifactProtocol(extractLastAssistantThreadText(thread));
-      if (recovered && !isAgentResultPreviewOnly(job, recovered)) {
+      if (recovered && !isAgentResultPreviewOnly(effectiveJob, recovered)) {
         return recovered;
       }
     } catch {
       // Keep the command usable even if the provider thread cannot be reopened.
     }
     const rolloutRecovered = stripAgentArtifactProtocol(readCodexRolloutLastAgentMessage(session.codexThreadId));
-    if (rolloutRecovered && !isAgentResultPreviewOnly(job, rolloutRecovered)) {
+    if (rolloutRecovered && !isAgentResultPreviewOnly(effectiveJob, rolloutRecovered)) {
       return rolloutRecovered;
     }
-    return stored || String(job.lastResultPreview ?? '').trim();
+    return stored || String(effectiveJob.lastResultPreview ?? '').trim();
   }
 
   createAgentResultTextArtifact(job: AgentJob, resultText: string): TurnArtifactDeliveredItem {

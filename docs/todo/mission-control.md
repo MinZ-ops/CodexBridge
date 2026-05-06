@@ -373,7 +373,7 @@ Phase 5 source-of-truth tests:
 - [x] Make `/agent` call Mission Control instead of owning the runner directly
 - [x] Make `/auto` schedule Mission Control runs instead of separate background
   job logic
-- [ ] Reuse the same mission state for:
+- [x] Reuse the same mission state for:
   - list
   - show
   - stop
@@ -403,6 +403,17 @@ Control through a bridge-side adapter that:
 - persists rebound bridge-session identity back onto the compatibility record so
   continuation turns stay on the live session instead of stale session ids
 
+Phase 6c landed: bridge-side `/agent` read/control commands now project a
+single Mission Control-backed state view so that:
+
+- list/show/result prefer `missionRuntimeState` over stale compatibility fields
+- stop updates the persisted mission snapshot instead of only toggling legacy
+  `AgentJob` status fields
+- retry re-queues a fresh queued mission snapshot under the same mission/job id
+  instead of dropping back to ad hoc compatibility-only state
+- existing `/agent result` fallback still backfills the compatibility record
+  when only a preview copy was cached locally
+
 Completion criteria:
 
 - [x] `/agent` remains the Mission v0 surface
@@ -415,6 +426,7 @@ Phase 6 source-of-truth tests:
   - `/agent drafts, confirms, runs, verifies, and records a background job`
   - `/agent stores generated attachments and can resend them`
   - `/agent show, retry, rename, stop, and delete manage queued jobs`
+  - `/agent list, show, result, stop, and retry prefer Mission Control runtime state over stale compatibility fields`
   - `/agent runAgentJob retries after an interrupted provider turn and completes on the next attempt`
   - `/agent runAgentJob continues the same attempt after a normal partial provider exit`
   - `/agent runAgentJob loads WORKFLOW.md and routes it into the mission-controlled execution prompt`

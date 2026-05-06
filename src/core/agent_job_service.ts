@@ -1,5 +1,11 @@
 import crypto from 'node:crypto';
 import { NotFoundError } from './errors.js';
+import {
+  createFreshMissionRuntimeStateForAgentJob,
+  createMissionControlledAgentJobView,
+  createStoppedMissionRuntimeStateForAgentJob,
+  serializeAgentJobMissionRuntimeState,
+} from './mission_control_agent_job_adapter.js';
 import { createI18n, type Translator } from '../i18n/index.js';
 import type {
   AgentJob,
@@ -169,15 +175,27 @@ export class AgentJobService {
 
   requestStop(id: string): AgentJob {
     const current = this.requireById(id);
+    const effectiveJob = createMissionControlledAgentJobView(current);
+    const stoppedState = createStoppedMissionRuntimeStateForAgentJob(current, {
+      reason: 'Agent job stop requested.',
+      now: this.now(),
+    });
     return this.updateJob(id, {
       stopRequested: true,
       running: false,
-      status: current.status === 'completed' || current.status === 'failed' ? current.status : 'stopped',
+      status: effectiveJob.status === 'completed' || effectiveJob.status === 'failed'
+        ? effectiveJob.status
+        : 'stopped',
+      missionRuntimeState: stoppedState ? serializeAgentJobMissionRuntimeState(stoppedState) : current.missionRuntimeState,
     });
   }
 
   retryJob(id: string): AgentJob {
     const current = this.requireById(id);
+    const resetState = createFreshMissionRuntimeStateForAgentJob(current, {
+      now: this.now(),
+      codexThreadId: this.getSession(current)?.codexThreadId ?? null,
+    });
     return this.updateJob(id, {
       status: 'queued',
       running: false,
@@ -191,7 +209,8 @@ export class AgentJobService {
       missionWorkpadLatestBlocker: null,
       missionWorkpadLatestVerifierSummary: null,
       missionWorkpadFinalResultSummary: null,
-      missionRuntimeState: null,
+      missionAttemptHistory: [],
+      missionRuntimeState: serializeAgentJobMissionRuntimeState(resetState),
     });
   }
 
