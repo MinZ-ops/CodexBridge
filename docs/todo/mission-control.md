@@ -478,6 +478,25 @@ resume semantics so that:
 - completed or failed reruns still reset through package retry snapshots, so a
   deliberate fresh rerun keeps bounded clean-state behavior
 
+Phase 4-6 revalidation sync landed: package-level verification and bridge-side
+integration tests were rerun against the current `track/mission-control` code so
+that:
+
+- the completed status of Phase 4, Phase 5, and Phase 6 remains backed by
+  current code, not only by historical checklist state
+- the top-level roadmap can mark Mission Control's workflow/workpad/workspace,
+  verifier-authority, continuation, and CodexBridge control-surface integration
+  summary items complete without drifting from the tested implementation
+- the current validation baseline is explicit:
+  - `pnpm mission-control:typecheck`
+  - `pnpm mission-control:test`
+  - `pnpm mission-control:build`
+  - `pnpm mission-control:check-boundary`
+  - `pnpm test --test-name-pattern "Mission Control|WORKFLOW\\.md|interrupted provider turn|normal partial provider exit|approval requests|scheduled runs delegate" test/core/bridge_coordinator.test.ts`
+  - `pnpm test --test-name-pattern "AgentJobService retryJob preserves Mission Control runtime history when re-queueing waiting-human missions|AgentJobService retryJob still clears runtime history for fresh reruns" test/core/agent_job_service.test.ts`
+  - `pnpm test --test-name-pattern "automation mission runner persists rebound bridge sessions across continuation turns" test/core/mission_control_automation_job_runner.test.ts`
+  - `pnpm test --test-name-pattern "WeixinBridgeRuntime runs due automation jobs against the same WeChat scope and records completion" test/runtime/weixin_bridge_runtime.test.ts`
+
 ## Phase 7: Optional Web Surface
 
 Only after chat control is solid:
