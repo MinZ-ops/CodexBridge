@@ -1,76 +1,86 @@
 # CodexBridge Roadmap TODO
 
-This document tracks the backlog that is still intentionally unfinished.
-Completed items are removed from the active checklist instead of being left as
-stale TODOs.
+This document is the top-level roadmap for CodexBridge.
+
+It should stay short and stable. Detailed implementation checklists belong in
+feature-specific TODO files instead of being expanded here.
 
 ## Immutable Target
 
 CodexBridge 的目标是通过微信稳定暴露 Codex 原生能力，并在桥接层扩展微信命令和个人助理工作流；`@codexbridge/codex-gateway` 的目标是让 Codex 稳定接入多模型来源。
 
-This target is stable. The roadmap may be edited as implementation details
+This target is stable. The route, package layout, and branch strategy may
 change, but every new task should be judged against whether it advances this
 target.
 
+## Working Branch Model
+
+The repository should be developed through two long-lived workstream branches,
+not one short-lived branch per tiny feature:
+
+```text
+main
+  stable integration line
+
+track/codex-gateway
+  Codex Gateway protocol workstream
+
+track/mission-control
+  Mission Control orchestration workstream
+```
+
+Rules:
+
+- `main` should stay mergeable and reasonably stable
+- `track/codex-gateway` should primarily own Codex Gateway protocol/package work
+- `track/mission-control` should primarily own Mission Control runtime/package work
+- low-level checklist churn should stay out of this file
+- avoid frequent concurrent edits to shared files such as:
+  - `docs/todo/roadmap.md`
+  - `README.md`
+  - `package.json`
+
+## Detailed Backlogs
+
+Use these files for detailed implementation work:
+
+- [Codex Gateway TODO](./codex-gateway.md)
+- [Mission Control TODO](./mission-control.md)
+
+Architecture references:
+
+- [Core architecture](../architecture/codexbridge-core-architecture.md)
+- [Mission Control architecture](../architecture/mission-control.md)
+
+Reference sources currently tracked:
+
+- `reference/codex-gateway` for LiteLLM, codex-proxy, open-responses, and llm-rosetta
+- `reference/symphony` as the orchestration reference mirror when available
+
 ## Current Snapshot
 
-Already landed and no longer part of the active backlog:
+Already landed and no longer part of the active detailed backlog:
 
 - `/review` for uncommitted changes and base-branch review
 - `/agent` experimental Codex-first hybrid background jobs with draft-confirm, full-access Codex execution, verifier checks, and retry
 - `/plan` session-level native planning mode toggle
-- `/skills` visibility and on/off management
-- `/apps` runtime connector browsing, auth hints, and enable/disable management
-- `/plugins` visibility, aliasing, install/uninstall, and explicit plugin targeting
-- `/mcp` status, auth, reload, and enable/disable management
+- `/skills`, `/apps`, `/plugins`, and `/mcp` visibility and control surfaces
 - `/automation` draft-confirm flow and WeChat delivery-oriented scheduling
-- Assistant records via `/as`, `/log`, `/todo`, `/remind`, and `/note`, including Codex-normalized natural-language record updates, `/up` attachment archival, and reminder claiming
+- Assistant records via `/as`, `/log`, `/todo`, `/remind`, and `/note`
 - WeChat thread browsing with `/threads`, `/open`, `/search`, `/peek`, `/rename`
-- Thread cleanup and organization flows such as archive/restore and pin/unpin
 - Native-ish reconnect, retry, approval, and attachment delivery hardening
-
-Architecture references now available:
-
-- OpenAI Symphony is the orchestration reference. If we need a local study copy,
-  keep a git-ignored mirror under `reference/symphony`, but do not assume it is
-  always present.
-- `reference/codex-gateway` tracks LiteLLM, codex-proxy, open-responses,
-  and llm-rosetta as protocol-gateway references. These sources are ignored by
-  git and are for local architecture study only.
-- `docs/architecture/mission-control.md` defines how CodexBridge should
-  adapt Symphony-style workflow, workspace, workpad, retry, and status concepts
-  without replacing the chat-first WeChat control surface.
-- `docs/todo/mission-control.md` tracks the concrete package, persistence,
-  runner-loop, verification, and integration phases for
-  `@codexbridge/mission-control`.
-
-Mission Control reference route:
-
-- `openai/symphony` defines the orchestration model
-- the Symphony essence we need to preserve is: repo-owned workflow policy,
-  single-authority orchestration, stable workspaces, continuation after normal
-  exit, and first-class handoff states
-- `openai/openai-agents-js` is the future OpenAI-native provider reference
-- `langgraphjs`, `inngest`, and `dbos-transact-ts` are durability/recovery references
-- `mastra` and `VoltAgent` are TS runtime/package-structure references
-- the copied `codex-mission-control` project is a prior prototype reference for
-  lease/heartbeat/tmux supervision, not the final product name
-- the target output is still one CodexBridge-native internal package, not an
-  upstream runtime fork
+- `@codexbridge/codex-gateway` extracted as an internal package with package tests, boundary checks, and gated live-provider smoke flow
+- `@codexbridge/mission-control` bootstrapped as an internal package skeleton
 
 Important clarification:
 
-- A separate `/resume` command is **not** a current priority because bridge UX
-  already treats `/open <thread>` as the practical “resume this old session”
-  path.
-- A separate `/cwd` command is **not** a current priority because `/status`
-  already exposes the current bound session and working-directory context well
-  enough for now.
+- `/open <thread>` remains the practical “resume this old session” path, so a separate `/resume` command is not a current priority
+- `/status` already exposes working-directory and session context well enough for now, so a separate `/cwd` command is not a current priority
 
-## Current Priority: Make WeChat a Stable Codex Terminal
+## Cross-Cutting Priorities
 
-The next phase should prioritize day-to-day runtime reliability and native
-Codex output quality over adding more bridge-only command surface area.
+These are the priorities that still belong in the shared roadmap because they
+affect the product as a whole, not just one package.
 
 ### P0: WeChat runtime reliability
 
@@ -96,158 +106,31 @@ Codex output quality over adding more bridge-only command surface area.
 - [ ] Design a companion-based computer-use workflow for desktop GUI tasks with explicit approvals and app allowlists
 - [ ] Decide whether these desktop-native abilities belong in CodexBridge itself or in a separate local companion service
 
-### P2: Mission Control
+### P2: Codex Gateway summary
 
-- [x] Create `packages/mission-control` as an internal package skeleton, following the same internal-package pattern as `packages/codex-gateway`
-- [x] Keep Mission Control in the current repository first; do not introduce a workspace/monorepo layer until multiple internal packages need independent dependency/version management
-- [x] Treat `/agent` as the Mission Control v0 surface instead of adding a new `/mission` command too early
-- [ ] Keep Symphony's real core ideas intact: workflow-owned policy, single orchestrator authority, stable workspace identity, continuation retries after normal exit, and handoff/wait-user states
-- [ ] Mine the copied `codex-mission-control` prototype for bounded-contract, lease, heartbeat, and tmux ideas without inheriting its package name or direct shell-runner shape
-- [ ] Add `.codexbridge/mission/WORKFLOW.md` loading with YAML front matter plus prompt body, using Symphony's workflow-contract pattern
-- [ ] Add a persistent mission workpad to background jobs so `/agent show` can expose plan, acceptance criteria, validation, notes, blockers, and final handoff
-- [ ] Add workspace isolation for code-changing long-running jobs under `~/.codexbridge/mission/workspaces/<missionId>/`
-- [ ] Add a bounded runner loop for mission jobs: run, verify, repair/retry, block or complete
-- [ ] Keep WeChat as the notification and control entrypoint while allowing future GitHub/Linear issue sources
-- [ ] Keep Symphony as a reference implementation only; do not vendor its Elixir runtime into CodexBridge
-- [ ] Use `docs/todo/mission-control.md` as the detailed implementation checklist instead of overloading the main roadmap with low-level package steps
+- [ ] Finish the remaining live-provider smoke coverage through real profiles
+- [ ] Keep new provider onboarding config-first and capability-driven
+- [ ] Decide whether the package remains internal-only or moves toward a publishable boundary
 
-### P2: Extract reusable Codex Gateway package
+Detailed checklist:
 
-Goal: split the OpenAI-compatible protocol conversion layer out of the
-CodexBridge provider implementation so the same gateway can later be reused by
-CodexBridge, Telegram Bridge, Mission Control, or a standalone npm package.
+- [Codex Gateway TODO](./codex-gateway.md)
 
-The package should be responsible for:
+### P2: Mission Control summary
 
-- [x] Convert OpenAI Responses requests to Chat Completions requests
-- [x] Convert Chat Completions responses back to Responses objects
-- [x] Convert Chat Completions SSE chunks into Responses SSE events
-- [x] Convert tool/function calls in both non-streaming and streaming paths
-- [x] Map provider usage/token fields into Responses usage
-- [x] Map provider errors and stream read failures into stable Responses errors
-- [x] Apply provider capability rules for tools, reasoning/thinking, payload quirks, multimodal input, JSON/schema support, token caps, and unsupported feature downgrade
-- [x] Expose a small local adapter server that presents `/v1/responses`, `/v1/responses/compact`, and `/v1/models`
+- [ ] Preserve Symphony's real core ideas: workflow-owned policy, single orchestrator authority, stable workspace identity, continuation retries after normal exit, and handoff/wait-user states
+- [ ] Add workflow loading, workpad persistence, workspace isolation, and bounded run/verify/repair loop
+- [ ] Keep WeChat as the control and notification entrypoint while Mission Control owns orchestration
 
-The package must continue **not** to own:
+Detailed checklist:
 
-- WeChat commands, SendGate, chunking, typing, or `ret:-2` behavior
-- Bridge sessions, provider profile selection, thread binding, `/new`, `/open`, `/threads`, or `/status`
-- `/allow`, `/deny`, `/retry`, `/reconnect`, approval state, or interrupted-turn recovery
-- Assistant records, automations, uploads, attachment archival, or i18n
-- Codex account/session management and native OpenAI app-server behavior
+- [Mission Control TODO](./mission-control.md)
 
-Migration plan:
-
-- [x] Phase 0: freeze current behavior with existing adapter tests before moving files
-- [x] Phase 0: record the current public surface that CodexBridge depends on: request conversion, response conversion, stream conversion, compact fallback, provider presets, capability merge, WebSocket repair primitives, and local adapter server
-- [x] Phase 1A: create `packages/codex-gateway` as an internal TypeScript package with its own `src/index.ts`
-- [x] Phase 1A: add package-level TypeScript config and test entrypoints before moving production logic
-- [x] Phase 1A: add bootstrap public exports for package identity and ownership boundaries
-- [x] Phase 1A: add an automated dependency-boundary check so package code cannot import CodexBridge core/platform/runtime/store/i18n modules
-- [x] Phase 1B: export provider capability presets, CLIProxyAPI-style model catalog helpers, and thinking policy from the package boundary
-- [x] Phase 1B: move provider capability types, thinking policy, payload rules, and CLIProxyAPI-style model catalog import into `packages/codex-gateway`
-- [x] Phase 1B: keep legacy re-export shims for migrated capability files under `src/providers/openai_compatible/*` and `src/providers/shared/thinking_policy.ts`
-- [x] Phase 1C: export migrated converter APIs from the package boundary and keep helper functions private
-- [x] Phase 1C: move Responses/Chat converter option types and pure request/response converter implementation into the package
-- [x] Phase 1C: keep legacy re-export shims for converter files under `src/providers/openai_compatible/*`
-- [x] Phase 2: move pure converters: request conversion, response conversion, usage mapping, error mapping, multimodal conversion, and tool-name repair
-- [x] Phase 2: move stream converters and SSE parser/builder while preserving the existing `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.failed`, and `response.completed` behavior
-- [x] Phase 2: add package-boundary converter tests and keep CodexBridge tests as integration coverage
-- [x] Phase 3: move the local adapter HTTP server into the package; keep `src/providers/openai_compatible/plugin.ts` as the CodexBridge integration wrapper
-- [x] Phase 3: make CodexBridge pass provider profile/env config into the adapter package through the legacy server shim instead of importing converter internals directly
-- [x] Phase 4: add contract tests at the package boundary for Responses request, Chat request, non-streaming output, streaming output, tool calls, usage, errors, compact fallback, and multimodal downgrades
-- [ ] Phase 4: run live smoke tests through CodexBridge profiles only after package-level tests pass
-- [ ] Phase 5: decide whether to publish as `@codexbridge/codex-gateway`; keep it private/internal until the API boundary is stable
-- [ ] Phase 5: optionally add a standalone HTTP proxy binary only after the package is stable. The first product target remains CodexBridge integration, not a public gateway.
-
-Phase 0 frozen migration surface:
-
-- [x] Core converters: `responsesRequestToChatCompletions`, `chatCompletionsResponseToResponses`, `responsesRequestToCompactionResponse`
-- [x] Stream converters: `translateChatCompletionsSseToResponsesEvents`, `translateChatCompletionsSseStreamToResponsesSse`
-- [x] Local server: `OpenAICompatibleResponsesAdapterServer`, `reserveLocalPort`
-- [x] Capability/model catalog: `getOpenAICompatibleProviderPreset`, `buildOpenAICompatibleModelCatalog`, `buildOpenAICompatibleExternalModelCatalog`, CLIProxyAPI catalog helpers
-- [x] Thinking/payload policy: capability types, `mergeOpenAICompatibleProviderCapabilities`, `resolveOpenAICompatibleProviderCapabilitiesForModel`, `resolveReasoningEffortForProvider`, `applyThinkingPolicyToOpenAIChatRequest`
-- [x] WebSocket repair: transcript replacement, synthetic call ID, tool-call input repair, and event recording primitives
-- [x] Baseline tests run on 2026-05-06: adapter, adapter server, WebSocket repair, and OpenAI-compatible plugin tests
-
-Phase 1A package bootstrap:
-
-- [x] Package root: `packages/codex-gateway`
-- [x] Package metadata: `packages/codex-gateway/package.json`
-- [x] Package source entry: `packages/codex-gateway/src/index.ts`
-- [x] Package README documents protocol-only ownership and bridge non-ownership
-- [x] Root scripts: `codex-gateway:typecheck`, `codex-gateway:build`, `codex-gateway:test`, `codex-gateway:check-boundary`
-- [x] Boundary script: `scripts/check-codex-gateway-boundary.mjs`
-- [x] Root `tsconfig.json` includes `packages/**/*.ts` so full typecheck/build sees package code
-- [x] Phase 1A verification run on 2026-05-06: `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:check-boundary`, `codex-gateway:build`, root `typecheck`, root `build`, and `git diff --check`
-
-Phase 1B capability migration:
-
-- [x] Moved `src/providers/shared/thinking_policy.ts` implementation to `packages/codex-gateway/src/capabilities/thinking_policy.ts`
-- [x] Moved `src/providers/openai_compatible/cliproxy_model_catalog.ts` implementation to `packages/codex-gateway/src/capabilities/cliproxy_model_catalog.ts`
-- [x] Moved `src/providers/openai_compatible/capability_presets.ts` implementation to `packages/codex-gateway/src/capabilities/capability_presets.ts`
-- [x] Replaced the old CodexBridge paths with re-export shims so existing imports continue to work
-- [x] Removed the package-side dependency on CodexBridge `ProviderModelInfo` by introducing a package-local structural `OpenAICompatibleModelInfo`
-- [x] Added package-level capability tests for presets, external catalog import, reasoning effort resolution, and model capability overrides
-- [x] Phase 1B verification run on 2026-05-06: `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:check-boundary`, `codex-gateway:build`, OpenAI-compatible adapter/config/plugin tests, root `typecheck`, root `build`, and `git diff --check`
-
-Phase 1C/2 converter migration:
-
-- [x] Moved `src/providers/openai_compatible/responses_adapter.ts` implementation to `packages/codex-gateway/src/converters/responses_adapter.ts`
-- [x] Replaced the old `src/providers/openai_compatible/responses_adapter.ts` path with a re-export shim so adapter server and tests keep working
-- [x] Exported request conversion, response conversion, compaction fallback, and SSE translator APIs from `packages/codex-gateway/src/index.ts`
-- [x] Added package-level converter tests for request conversion, response conversion, and SSE conversion
-- [x] Phase 1C/2 verification run on 2026-05-06: `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:check-boundary`, `codex-gateway:build`, OpenAI-compatible adapter/config/plugin tests, root `typecheck`, root `build`, and `git diff --check`
-
-Phase 3 server migration:
-
-- [x] Moved `src/providers/openai_compatible/responses_adapter_server.ts` implementation to `packages/codex-gateway/src/server/responses_adapter_server.ts`
-- [x] Replaced the old `src/providers/openai_compatible/responses_adapter_server.ts` path with a re-export shim so `OpenAICompatibleProviderPlugin` and existing tests keep working
-- [x] Exported `OpenAICompatibleResponsesAdapterServer`, server options, and `reserveLocalPort` from `packages/codex-gateway/src/index.ts`
-- [x] Added package-level server tests for compact fallback, model metadata, and local port reservation
-- [x] Phase 3 verification run on 2026-05-06: `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:check-boundary`, `codex-gateway:build`, OpenAI-compatible adapter/server/config/plugin/WebSocket repair tests, root `typecheck`, root `build`, and `git diff --check`
-
-Phase 4 package contract suite:
-
-- [x] Added `packages/codex-gateway/test/contracts.test.ts` as the package-boundary contract suite
-- [x] Covered Responses request to Chat request conversion without bridge-owned fields
-- [x] Covered non-streaming Chat response to completed Responses object conversion
-- [x] Covered function tool request conversion, tool-name shortening, and response-side name restoration
-- [x] Covered model-level tool disabling and transcript downgrade behavior
-- [x] Covered streaming text and tool-call deltas into Responses SSE events
-- [x] Covered OpenAI usage, Gemini-family `usageMetadata`, and estimated usage fallback
-- [x] Covered upstream stream errors and upstream read failures as `response.failed`
-- [x] Covered local compact fallback output
-- [x] Covered multimodal downgrade for unsupported image and file input
-- [x] Phase 4 full verification run on 2026-05-06: `codex-gateway:check-boundary`, `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:build`, OpenAI-compatible adapter/server/config/plugin/WebSocket repair tests, root `typecheck`, root `build`, and `git diff --check`
-- [x] Refactored live-provider smoke tests to load the real CodexBridge provider profiles via `loadCodexProfilesFromEnv()` before starting the local Responses adapter server
-- [x] Added `pnpm run test:live-openai-compatible` as the explicit gated live smoke entrypoint
-- [x] Profile-based live smoke harness verification run on 2026-05-06: default test path skips safely; gated path also skips when current shell has no DeepSeek, MiniMax, Qwen/DashScope, or OpenRouter profile env
-- [x] Added `CODEXBRIDGE_TEST_ENV_FILE` support to the test runner so gated live tests can load a service env file without printing secrets
-- [x] Live profile smoke run on 2026-05-06 with `/home/ubuntu/.config/codexbridge/weixin.service.env`: DeepSeek and MiniMax passed through real CodexBridge profiles
-- [ ] Phase 4 live provider smoke remains pending for Qwen/DashScope and OpenRouter until credentials are available
-
-Reference usage:
-
-- [ ] Use codex-proxy as the main reference for Codex Responses event handling, `previous_response_id`, function-call streams, and real protocol tests
-- [ ] Use llm-rosetta as the reference for a future IR layer; do not add a full IR until Responses-to-Chat starts blocking Anthropic/Gemini-native support
-- [ ] Use LiteLLM as the reference for provider catalogs, cost/usage metadata, retry/error taxonomy, and gateway-level operational concerns
-- [ ] Treat open-responses as a Responses-first product reference, not as code to vendor into this adapter
-
-Completion criteria:
-
-- [ ] CodexBridge can switch OpenAI-native, DeepSeek, MiniMax, Qwen, and OpenRouter profiles without changing WeChat UX
-- [x] The adapter package can be tested without starting WeChat or CodexBridge runtime
-- [x] The adapter package has no imports from CodexBridge core, platform runtimes, stores, slash commands, or i18n
-- [x] Legacy CodexBridge import paths still work through re-export shims during the migration window
-- [ ] Adding a new OpenAI-compatible provider normally requires config/capability data, not a new provider plugin class
-- [x] Unsupported provider features produce clear downgrade/error behavior instead of silent stalls or malformed upstream payloads
-- [x] Existing CodexBridge OpenAI-compatible tests pass through the new package boundary
-
-### Guardrail
+## Guardrails
 
 - [ ] Do not prioritize new bridge-only slash commands ahead of high-value native Codex parity work unless the native layer is unavailable
 - [ ] Do not add bridge-only aliases when existing commands already cover the user need well enough, such as `/open` for resume-style continuation or `/status` for cwd/session inspection
+- [ ] Do not let this file become a second detailed implementation log for Codex Gateway or Mission Control
 
 ## Later Direction: Telegram Runtime
 
@@ -258,45 +141,3 @@ still a later-phase item.
 - [ ] Add real Telegram outbound transport for text, typing, media, and files
 - [ ] Wire Telegram runtime into the same persisted bridge-session flow used by WeChat
 - [ ] Verify the same bridge session can be continued across WeChat and Telegram end-to-end
-
-## Later Direction: Additional Codex-Compatible Providers
-
-The generic OpenAI-compatible Responses adapter is now the preferred bridge
-path for non-OpenAI providers that expose Chat Completions-shaped APIs. It
-covers compact fallback, SSE tool-call repair, CLIProxyAPI-style WebSocket
-transcript repair primitives, thinking policy, payload compatibility, error
-mapping, CLIProxyAPI top-level stream error chunks, SSE framing, stream read
-failure framing, configured transient retry, usage fallback including Gemini-family
-`usageMetadata`, multimodal capability flags, CLIProxyAPI `models.json` catalog
-import, and model capability metadata.
-
-- [x] Add generic OpenAI-compatible Responses adapter primitives
-- [x] Add configuration-only OpenAI-compatible provider profile loader
-- [x] Move DeepSeek and MiniMax onto the generic `openai-compatible` provider path
-- [x] Port CLIProxyAPI-style model capability catalog for Codex, DeepSeek, MiniMax, Qwen, iFlow, Kimi, OpenRouter, Gemini/AI Studio/Vertex, Claude, and Antigravity model families
-- [x] Convert model differences into capability/payload/thinking rules instead of dedicated provider plugins
-- [x] Add CLIProxyAPI-style payload raw/default/override/filter/root/protocol matching
-- [x] Allow `*_MODEL_CATALOG_PATH` to import CLIProxyAPI `models.json`-shaped catalogs and merge model metadata into runtime capabilities
-- [x] Map upstream stream read failures into Responses `response.failed` events instead of broken streams
-- [x] Map CLIProxyAPI-style top-level stream error chunks into Responses `response.failed`
-- [x] Map Gemini-family `usageMetadata` into Responses usage for non-streaming and streaming responses
-- [x] Add explicit `*_REQUEST_RETRY` and `*_RETRY_STATUSES` transient upstream retry support
-- [x] Add generic translator repairs for MiniMax consecutive tool calls, iFlow boolean thinking flags, and Kimi upstream model alias rewrite
-- [x] Add gated live-provider smoke tests for DeepSeek, MiniMax, Qwen, and OpenRouter
-- [x] Route gated live-provider smoke tests through the CodexBridge provider profile loader instead of hand-written provider specs
-- [x] Validate DeepSeek against the real upstream API through the local Responses adapter
-- [x] Port CLIProxyAPI WebSocket transcript/tool-call repair into a tested local module
-- [x] Validate MiniMax against the real upstream API through the local Responses adapter
-- [ ] Validate Qwen and OpenRouter against real upstream APIs when credentials are available
-- [ ] Validate provider-specific catalogs, defaults, and real usage reporting against live providers
-- [ ] Verify provider switching boundaries under real runtime conditions
-- [ ] Keep runtime WebSocket disabled until the adapter server has a real upgrade handler; the repair logic is now ready for that future path
-
-## Engineering Hardening
-
-These are quality improvements, not current product blockers.
-
-- [ ] Reduce `any` in edge adapters and test scaffolding
-- [ ] Tighten null handling where it adds real signal
-- [ ] Remove remaining transitional typing workarounds when feature churn settles
-- [ ] Incrementally strengthen compiler settings after behavior remains stable

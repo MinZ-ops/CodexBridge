@@ -1,0 +1,197 @@
+# Codex Gateway TODO
+
+This document tracks the implementation backlog for
+`@codexbridge/codex-gateway`.
+
+It is the execution-oriented companion to:
+
+- `docs/architecture/codexbridge-core-architecture.md`
+- `docs/todo/roadmap.md`
+
+## Scope
+
+Codex Gateway should become the protocol layer that lets Codex run on
+OpenAI-compatible model providers without changing bridge-side WeChat UX.
+
+It should own:
+
+- Responses request to Chat Completions request conversion
+- Chat Completions response to Responses object conversion
+- SSE and stream-event conversion
+- function/tool call conversion and repair
+- provider capability catalog and payload rules
+- reasoning/thinking policy normalization
+- usage and error normalization
+- local `/v1/responses` adapter server
+
+It should **not** own:
+
+- WeChat/Telegram transports
+- SendGate delivery policy or `ret:-2` handling
+- slash commands, i18n, and user-facing chat UX
+- bridge sessions, thread binding, or provider profile selection UX
+- approvals, retry/reconnect, or interrupted-turn recovery state
+- assistant records, automations, uploads, or artifact delivery policy
+- Codex native account/session management
+
+## Track Branch
+
+Primary long-lived branch for this workstream:
+
+```text
+track/codex-gateway
+```
+
+Expected file ownership for this branch:
+
+- `packages/codex-gateway/**`
+- `src/providers/openai_compatible/**`
+- `src/providers/shared/thinking_policy.ts`
+- `test/providers/openai_compatible/**`
+- `reference/codex-gateway/**`
+- `docs/architecture/codexbridge-core-architecture.md`
+- `docs/todo/codex-gateway.md`
+
+Avoid frequent edits here unless the change is truly cross-cutting:
+
+- `docs/todo/roadmap.md`
+- `README.md`
+- `package.json`
+
+## Current Active Focus
+
+- [ ] Finish live-provider smoke coverage for Qwen/DashScope and OpenRouter once credentials are available
+- [ ] Keep new provider onboarding config-first and capability-driven instead of adding one-off provider classes
+- [ ] Keep package ownership strictly at protocol/gateway level
+- [ ] Decide whether Phase 5 should remain internal-only or move toward publishable package form
+
+## Packaging Direction
+
+The package should stay as an internal package inside the CodexBridge
+repository first:
+
+```text
+packages/codex-gateway/
+```
+
+Rules:
+
+- `CodexBridge -> @codexbridge/codex-gateway`
+- `@codexbridge/codex-gateway -X-> CodexBridge core/platform/runtime/store/i18n`
+- No workspace/monorepo conversion is required yet
+- Legacy CodexBridge provider paths may remain re-export shims during migration
+
+## Migration Plan
+
+The package should be responsible for:
+
+- [x] Convert OpenAI Responses requests to Chat Completions requests
+- [x] Convert Chat Completions responses back to Responses objects
+- [x] Convert Chat Completions SSE chunks into Responses SSE events
+- [x] Convert tool/function calls in both non-streaming and streaming paths
+- [x] Map provider usage/token fields into Responses usage
+- [x] Map provider errors and stream read failures into stable Responses errors
+- [x] Apply provider capability rules for tools, reasoning/thinking, payload quirks, multimodal input, JSON/schema support, token caps, and unsupported feature downgrade
+- [x] Expose a small local adapter server that presents `/v1/responses`, `/v1/responses/compact`, and `/v1/models`
+
+The package must continue **not** to own:
+
+- WeChat commands, SendGate, chunking, typing, or `ret:-2` behavior
+- Bridge sessions, provider profile selection, thread binding, `/new`, `/open`, `/threads`, or `/status`
+- `/allow`, `/deny`, `/retry`, `/reconnect`, approval state, or interrupted-turn recovery
+- Assistant records, automations, uploads, attachment archival, or i18n
+- Codex account/session management and native OpenAI app-server behavior
+
+### Phase 0
+
+- [x] Freeze current behavior with existing adapter tests before moving files
+- [x] Record the public surface that CodexBridge depends on: request conversion, response conversion, stream conversion, compact fallback, provider presets, capability merge, WebSocket repair primitives, and local adapter server
+
+Frozen migration surface:
+
+- [x] Core converters: `responsesRequestToChatCompletions`, `chatCompletionsResponseToResponses`, `responsesRequestToCompactionResponse`
+- [x] Stream converters: `translateChatCompletionsSseToResponsesEvents`, `translateChatCompletionsSseStreamToResponsesSse`
+- [x] Local server: `OpenAICompatibleResponsesAdapterServer`, `reserveLocalPort`
+- [x] Capability/model catalog: `getOpenAICompatibleProviderPreset`, `buildOpenAICompatibleModelCatalog`, `buildOpenAICompatibleExternalModelCatalog`, CLIProxyAPI catalog helpers
+- [x] Thinking/payload policy: capability types, `mergeOpenAICompatibleProviderCapabilities`, `resolveOpenAICompatibleProviderCapabilitiesForModel`, `resolveReasoningEffortForProvider`, `applyThinkingPolicyToOpenAIChatRequest`
+- [x] WebSocket repair: transcript replacement, synthetic call ID, tool-call input repair, and event recording primitives
+- [x] Baseline tests run on 2026-05-06: adapter, adapter server, WebSocket repair, and OpenAI-compatible plugin tests
+
+### Phase 1A: Package bootstrap
+
+- [x] Package root: `packages/codex-gateway`
+- [x] Package metadata: `packages/codex-gateway/package.json`
+- [x] Package source entry: `packages/codex-gateway/src/index.ts`
+- [x] Package README documents protocol-only ownership and bridge non-ownership
+- [x] Root scripts: `codex-gateway:typecheck`, `codex-gateway:build`, `codex-gateway:test`, `codex-gateway:check-boundary`
+- [x] Boundary script: `scripts/check-codex-gateway-boundary.mjs`
+- [x] Root `tsconfig.json` includes `packages/**/*.ts` so full typecheck/build sees package code
+- [x] Verification run on 2026-05-06: `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:check-boundary`, `codex-gateway:build`, root `typecheck`, root `build`, and `git diff --check`
+
+### Phase 1B: Capability migration
+
+- [x] Moved `src/providers/shared/thinking_policy.ts` implementation to `packages/codex-gateway/src/capabilities/thinking_policy.ts`
+- [x] Moved `src/providers/openai_compatible/cliproxy_model_catalog.ts` implementation to `packages/codex-gateway/src/capabilities/cliproxy_model_catalog.ts`
+- [x] Moved `src/providers/openai_compatible/capability_presets.ts` implementation to `packages/codex-gateway/src/capabilities/capability_presets.ts`
+- [x] Replaced the old CodexBridge paths with re-export shims so existing imports continue to work
+- [x] Removed the package-side dependency on CodexBridge `ProviderModelInfo` by introducing a package-local structural `OpenAICompatibleModelInfo`
+- [x] Added package-level capability tests for presets, external catalog import, reasoning effort resolution, and model capability overrides
+- [x] Verification run on 2026-05-06: `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:check-boundary`, `codex-gateway:build`, OpenAI-compatible adapter/config/plugin tests, root `typecheck`, root `build`, and `git diff --check`
+
+### Phase 1C / Phase 2: Converter migration
+
+- [x] Moved `src/providers/openai_compatible/responses_adapter.ts` implementation to `packages/codex-gateway/src/converters/responses_adapter.ts`
+- [x] Replaced the old `src/providers/openai_compatible/responses_adapter.ts` path with a re-export shim so adapter server and tests keep working
+- [x] Exported request conversion, response conversion, compaction fallback, and SSE translator APIs from `packages/codex-gateway/src/index.ts`
+- [x] Added package-level converter tests for request conversion, response conversion, and SSE conversion
+- [x] Verification run on 2026-05-06: `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:check-boundary`, `codex-gateway:build`, OpenAI-compatible adapter/config/plugin tests, root `typecheck`, root `build`, and `git diff --check`
+
+### Phase 3: Server migration
+
+- [x] Moved `src/providers/openai_compatible/responses_adapter_server.ts` implementation to `packages/codex-gateway/src/server/responses_adapter_server.ts`
+- [x] Replaced the old `src/providers/openai_compatible/responses_adapter_server.ts` path with a re-export shim so `OpenAICompatibleProviderPlugin` and existing tests keep working
+- [x] Exported `OpenAICompatibleResponsesAdapterServer`, server options, and `reserveLocalPort` from `packages/codex-gateway/src/index.ts`
+- [x] Added package-level server tests for compact fallback, model metadata, and local port reservation
+- [x] Verification run on 2026-05-06: `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:check-boundary`, `codex-gateway:build`, OpenAI-compatible adapter/server/config/plugin/WebSocket repair tests, root `typecheck`, root `build`, and `git diff --check`
+
+### Phase 4: Contract suite and live smoke
+
+- [x] Added `packages/codex-gateway/test/contracts.test.ts` as the package-boundary contract suite
+- [x] Covered Responses request to Chat request conversion without bridge-owned fields
+- [x] Covered non-streaming Chat response to completed Responses object conversion
+- [x] Covered function tool request conversion, tool-name shortening, and response-side name restoration
+- [x] Covered model-level tool disabling and transcript downgrade behavior
+- [x] Covered streaming text and tool-call deltas into Responses SSE events
+- [x] Covered OpenAI usage, Gemini-family `usageMetadata`, and estimated usage fallback
+- [x] Covered upstream stream errors and upstream read failures as `response.failed`
+- [x] Covered local compact fallback output
+- [x] Covered multimodal downgrade for unsupported image and file input
+- [x] Full verification run on 2026-05-06: `codex-gateway:check-boundary`, `codex-gateway:typecheck`, `codex-gateway:test`, `codex-gateway:build`, OpenAI-compatible adapter/server/config/plugin/WebSocket repair tests, root `typecheck`, root `build`, and `git diff --check`
+- [x] Refactored live-provider smoke tests to load the real CodexBridge provider profiles via `loadCodexProfilesFromEnv()` before starting the local Responses adapter server
+- [x] Added `pnpm run test:live-openai-compatible` as the explicit gated live smoke entrypoint
+- [x] Profile-based live smoke harness verification run on 2026-05-06: default test path skips safely; gated path also skips when current shell has no DeepSeek, MiniMax, Qwen/DashScope, or OpenRouter profile env
+- [x] Added `CODEXBRIDGE_TEST_ENV_FILE` support to the test runner so gated live tests can load a service env file without printing secrets
+- [x] Live profile smoke run on 2026-05-06 with `/home/ubuntu/.config/codexbridge/weixin.service.env`: DeepSeek and MiniMax passed through real CodexBridge profiles
+- [ ] Live provider smoke remains pending for Qwen/DashScope and OpenRouter until credentials are available
+
+### Phase 5: Publish decision
+
+- [ ] Decide whether to publish as `@codexbridge/codex-gateway`; keep it private/internal until the API boundary is stable
+- [ ] Optionally add a standalone HTTP proxy binary only after the package is stable. The first product target remains CodexBridge integration, not a public gateway
+
+## Reference Usage
+
+- [ ] Use codex-proxy as the main reference for Codex Responses event handling, `previous_response_id`, function-call streams, and real protocol tests
+- [ ] Use llm-rosetta as the reference for a future IR layer; do not add a full IR until Responses-to-Chat starts blocking Anthropic/Gemini-native support
+- [ ] Use LiteLLM as the reference for provider catalogs, cost/usage metadata, retry/error taxonomy, and gateway-level operational concerns
+- [ ] Treat open-responses as a Responses-first product reference, not as code to vendor into this adapter
+
+## Completion Criteria
+
+- [ ] CodexBridge can switch OpenAI-native, DeepSeek, MiniMax, Qwen, and OpenRouter profiles without changing WeChat UX
+- [x] The gateway package can be tested without starting WeChat or CodexBridge runtime
+- [x] The gateway package has no imports from CodexBridge core, platform runtimes, stores, slash commands, or i18n
+- [x] Legacy CodexBridge import paths still work through re-export shims during the migration window
+- [ ] Adding a new OpenAI-compatible provider normally requires config/capability data, not a new provider plugin class
+- [x] Unsupported provider features produce clear downgrade/error behavior instead of silent stalls or malformed upstream payloads
+- [x] Existing CodexBridge OpenAI-compatible tests pass through the new package boundary

@@ -8,6 +8,27 @@ It is the execution-oriented companion to:
 - `docs/architecture/mission-control.md`
 - `docs/todo/roadmap.md`
 
+## Track Branch
+
+Primary long-lived branch for this workstream:
+
+```text
+track/mission-control
+```
+
+Expected file ownership for this branch:
+
+- `packages/mission-control/**`
+- `docs/architecture/mission-control.md`
+- `docs/todo/mission-control.md`
+- mission-control-specific integration files when they are introduced
+
+Avoid frequent edits here unless the change is truly cross-cutting:
+
+- `docs/todo/roadmap.md`
+- `README.md`
+- `package.json`
+
 ## Scope
 
 Mission Control should become the goal-driven runtime that keeps Codex working

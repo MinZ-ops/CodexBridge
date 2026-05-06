@@ -14,6 +14,7 @@ CodexBridge is a Codex-centered gateway for connecting multiple chat platforms t
 - [Core architecture](./docs/architecture/codexbridge-core-architecture.md)
 - [Mission Control architecture](./docs/architecture/mission-control.md)
 - [Roadmap TODO](./docs/todo/roadmap.md)
+- [Codex Gateway TODO](./docs/todo/codex-gateway.md)
 - [Mission Control TODO](./docs/todo/mission-control.md)
 - [WeChat slash command reference](./docs/usage/weixin-slash-commands.md)
 
