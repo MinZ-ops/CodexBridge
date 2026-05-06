@@ -123,12 +123,12 @@ Migration plan:
 - [x] Phase 1B: export provider capability presets, CLIProxyAPI-style model catalog helpers, and thinking policy from the package boundary
 - [x] Phase 1B: move provider capability types, thinking policy, payload rules, and CLIProxyAPI-style model catalog import into `packages/responses-adapter`
 - [x] Phase 1B: keep legacy re-export shims for migrated capability files under `src/providers/openai_compatible/*` and `src/providers/shared/thinking_policy.ts`
-- [ ] Phase 1C: define the migrated converter/server public API exports and keep helper functions private
-- [ ] Phase 1C: move Responses/Chat shapes and pure request/response converter types into the package
-- [ ] Phase 1C: keep legacy re-export shims for converter/server files under `src/providers/openai_compatible/*`
-- [ ] Phase 2: move pure converters: request conversion, response conversion, usage mapping, error mapping, multimodal conversion, and tool-name repair
-- [ ] Phase 2: move stream converters and SSE parser/builder while preserving the existing `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.failed`, and `response.completed` behavior
-- [ ] Phase 2: migrate adapter unit tests to the package boundary and keep CodexBridge tests as integration coverage
+- [x] Phase 1C: export migrated converter APIs from the package boundary and keep helper functions private
+- [x] Phase 1C: move Responses/Chat converter option types and pure request/response converter implementation into the package
+- [x] Phase 1C: keep legacy re-export shims for converter files under `src/providers/openai_compatible/*`
+- [x] Phase 2: move pure converters: request conversion, response conversion, usage mapping, error mapping, multimodal conversion, and tool-name repair
+- [x] Phase 2: move stream converters and SSE parser/builder while preserving the existing `response.created`, `response.output_item.added`, `response.output_text.delta`, `response.failed`, and `response.completed` behavior
+- [x] Phase 2: add package-boundary converter tests and keep CodexBridge tests as integration coverage
 - [ ] Phase 3: move the local adapter HTTP server into the package; keep `src/providers/openai_compatible/plugin.ts` as the CodexBridge integration wrapper
 - [ ] Phase 3: make CodexBridge pass provider profile/env config into the adapter package instead of importing converter internals directly
 - [ ] Phase 4: add contract tests at the package boundary for Responses request, Chat request, non-streaming output, streaming output, tool calls, usage, errors, compact fallback, and multimodal downgrades
@@ -166,6 +166,14 @@ Phase 1B capability migration:
 - [x] Removed the package-side dependency on CodexBridge `ProviderModelInfo` by introducing a package-local structural `OpenAICompatibleModelInfo`
 - [x] Added package-level capability tests for presets, external catalog import, reasoning effort resolution, and model capability overrides
 - [x] Phase 1B verification run on 2026-05-06: `responses-adapter:typecheck`, `responses-adapter:test`, `responses-adapter:check-boundary`, `responses-adapter:build`, OpenAI-compatible adapter/config/plugin tests, root `typecheck`, root `build`, and `git diff --check`
+
+Phase 1C/2 converter migration:
+
+- [x] Moved `src/providers/openai_compatible/responses_adapter.ts` implementation to `packages/responses-adapter/src/converters/responses_adapter.ts`
+- [x] Replaced the old `src/providers/openai_compatible/responses_adapter.ts` path with a re-export shim so adapter server and tests keep working
+- [x] Exported request conversion, response conversion, compaction fallback, and SSE translator APIs from `packages/responses-adapter/src/index.ts`
+- [x] Added package-level converter tests for request conversion, response conversion, and SSE conversion
+- [x] Phase 1C/2 verification run on 2026-05-06: `responses-adapter:typecheck`, `responses-adapter:test`, `responses-adapter:check-boundary`, `responses-adapter:build`, OpenAI-compatible adapter/config/plugin tests, root `typecheck`, root `build`, and `git diff --check`
 
 Reference usage:
 

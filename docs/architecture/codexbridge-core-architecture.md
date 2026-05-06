@@ -383,10 +383,14 @@ Phase 1B moves the first pure protocol/data slice into the package:
 - `packages/responses-adapter/src/capabilities/cliproxy_model_catalog.ts`
 - `packages/responses-adapter/src/capabilities/capability_presets.ts`
 
-The legacy CodexBridge paths are now re-export shims for those files. Request
-conversion, response conversion, stream conversion, and the local adapter server
-remain under `src/providers/openai_compatible/*` until the next phases move
-them behind equivalent shims.
+Phase 1C moves the converter and stream translator implementation into the
+package:
+
+- `packages/responses-adapter/src/converters/responses_adapter.ts`
+
+The legacy CodexBridge paths are now re-export shims for those files. The local
+adapter server remains under `src/providers/openai_compatible/*` until the next
+phase moves it behind an equivalent shim.
 
 CodexBridge keeps all bridge/runtime behavior:
 

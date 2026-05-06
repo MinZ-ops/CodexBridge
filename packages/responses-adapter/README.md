@@ -27,14 +27,15 @@ It must not own bridge behavior:
 - bridge sessions, thread binding, approval, retry, or reconnect state
 - assistant records, automations, uploads, or artifact delivery policy
 
-Phase 1B has moved the provider capability catalog, CLIProxyAPI-style model
-catalog, and reasoning/thinking policy into this package. The old CodexBridge
-paths still exist as re-export shims during migration:
+Phase 1B moved the provider capability catalog, CLIProxyAPI-style model catalog,
+and reasoning/thinking policy into this package. Phase 1C moved the pure
+Responses/Chat converter and SSE translator implementation into this package.
+The old CodexBridge paths still exist as re-export shims during migration:
 
 - `src/providers/openai_compatible/capability_presets.ts`
 - `src/providers/openai_compatible/cliproxy_model_catalog.ts`
+- `src/providers/openai_compatible/responses_adapter.ts`
 - `src/providers/shared/thinking_policy.ts`
 
-The request/response converters, stream converters, and local adapter server
-still live under `src/providers/openai_compatible/*` until the next migration
-phases move them behind equivalent shims.
+The local adapter server still lives under `src/providers/openai_compatible/*`
+until the next migration phase moves it behind an equivalent shim.

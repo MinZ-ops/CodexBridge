@@ -1,6 +1,6 @@
 export const RESPONSES_ADAPTER_PACKAGE_NAME = '@codexbridge/responses-adapter' as const;
 
-export const RESPONSES_ADAPTER_PACKAGE_PHASE = 'phase-1b-capabilities' as const;
+export const RESPONSES_ADAPTER_PACKAGE_PHASE = 'phase-1c-converters' as const;
 
 export const RESPONSES_ADAPTER_OWNS = [
   'responses-to-chat-conversion',
@@ -39,3 +39,4 @@ export type ResponsesAdapterExcludedResponsibility = typeof RESPONSES_ADAPTER_DO
 export * from './capabilities/capability_presets.js';
 export * from './capabilities/cliproxy_model_catalog.js';
 export * from './capabilities/thinking_policy.js';
+export * from './converters/responses_adapter.js';
