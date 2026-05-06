@@ -83,6 +83,7 @@ Latest progress:
 - [x] `codex-gateway` now ships an internal-only standalone server launcher that can boot the local `/v1/responses` adapter directly from env, without pulling in CodexBridge runtime code
 - [x] The standalone launcher now supports dotenv-style env-file loading (`CODEX_GATEWAY_ENV_FILE` / `--env-file`) so it can run without manual shell exports
 - [x] `codex-proxy`-inspired regression tests now lock `previous_response_id` preservation and Codex-style stream event ordering at the package server boundary
+- [x] LiteLLM-inspired upstream error normalization now preserves `retry_after_ms` plus selected request/rate-limit headers at the package server boundary
 
 ## Packaging Direction
 

@@ -258,6 +258,7 @@ Current Phase 5 decision:
 - keep the package export surface minimal while live-provider coverage and CodexBridge integration contracts are still settling
 - keep package-local build output under `packages/codex-gateway/dist` so `package.json` exports and files describe real artifacts
 - allow an internal-only standalone launcher for the local `/v1/responses` adapter server, as long as it stays inside the package boundary and does not pull bridge runtime concerns back in
+- let server-side upstream error normalization preserve actionable gateway metadata such as `retry_after_ms`, request IDs, and selected rate-limit headers when available
 - allow that standalone launcher to load dotenv-style env files inside the package itself, with explicit process env taking precedence over file defaults
 - only revisit publication after the protocol boundary is demonstrably stable
 

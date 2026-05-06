@@ -154,6 +154,54 @@ test('adapter server preserves previous_response_id in non-streaming responses',
   }
 });
 
+test('adapter server preserves retry-after and rate-limit metadata for upstream HTTP errors', async () => {
+  const server = new OpenAICompatibleResponsesAdapterServer({
+    apiKey: 'test-key',
+    fetchImpl: (async () => new Response(JSON.stringify({
+      error: {
+        message: 'Rate limit exceeded for deployment',
+        type: 'rate_limit_error',
+      },
+    }), {
+      status: 429,
+      headers: {
+        'Content-Type': 'application/json',
+        'Retry-After': '12',
+        'X-Request-Id': 'req_litellm_style_123',
+        'X-MS-Region': 'eastus',
+        'X-RateLimit-Remaining-Requests': '99',
+        'X-RateLimit-Remaining-Tokens': '9999',
+      },
+    })) as typeof fetch,
+  });
+
+  await server.start();
+  try {
+    const response = await fetch(`${server.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'example-model',
+        input: 'continue',
+      }),
+    });
+    const body = await response.json() as any;
+    assert.equal(response.status, 429);
+    assert.equal(body.error.message, 'Rate limit exceeded for deployment');
+    assert.equal(body.error.type, 'rate_limit_error');
+    assert.equal(body.error.code, 'rate_limit_exceeded');
+    assert.equal(body.error.retry_after_ms, 12_000);
+    assert.equal(body.error.metadata.request_id, 'req_litellm_style_123');
+    assert.equal(body.error.metadata.region, 'eastus');
+    assert.deepEqual(body.error.metadata.rate_limit_headers, {
+      'x-ratelimit-remaining-requests': '99',
+      'x-ratelimit-remaining-tokens': '9999',
+    });
+  } finally {
+    await server.stop();
+  }
+});
+
 test('adapter server streams codex-proxy style event ordering and keeps previous_response_id', async () => {
   const server = new OpenAICompatibleResponsesAdapterServer({
     apiKey: 'test-key',

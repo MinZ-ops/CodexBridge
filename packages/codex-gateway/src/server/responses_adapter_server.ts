@@ -210,7 +210,12 @@ export class OpenAICompatibleResponsesAdapterServer {
     );
     if (!upstream.response.ok) {
       writeJson(response, upstream.response.status || 502, {
-        error: normalizeUpstreamError(upstream.errorText ?? '', this.providerName, upstream.response.status),
+        error: normalizeUpstreamError(
+          upstream.errorText ?? '',
+          this.providerName,
+          upstream.response.status,
+          upstream.response.headers,
+        ),
       });
       return;
     }
@@ -261,7 +266,12 @@ export class OpenAICompatibleResponsesAdapterServer {
     );
     if (!upstream.response.ok) {
       writeJson(response, upstream.response.status || 502, {
-        error: normalizeUpstreamError(upstream.errorText ?? '', this.providerName, upstream.response.status),
+        error: normalizeUpstreamError(
+          upstream.errorText ?? '',
+          this.providerName,
+          upstream.response.status,
+          upstream.response.headers,
+        ),
       });
       return;
     }
@@ -487,37 +497,85 @@ function extractUpstreamError(text: string): string | null {
   }
 }
 
-function normalizeUpstreamError(text: string, providerName: string, status: number): JsonRecord {
+function normalizeUpstreamError(
+  text: string,
+  providerName: string,
+  status: number,
+  headers?: Headers | null,
+): JsonRecord {
   const trimmed = normalizeString(text);
+  const retryAfterMs = parseRetryAfterMs(headers?.get('retry-after') ?? null) ?? parseRetryAfterMsFromBody(trimmed);
+  const metadata = buildUpstreamErrorMetadata(headers);
   if (trimmed) {
     try {
       const parsed = JSON.parse(trimmed);
       if (parsed?.error && typeof parsed.error === 'object') {
-        return {
+        return omitUndefined({
           message: normalizeString(parsed.error.message) || `${providerName} upstream returned HTTP ${status}`,
           type: normalizeString(parsed.error.type) || 'upstream_error',
           code: parsed.error.code ?? upstreamErrorCode(status),
           param: parsed.error.param,
-        };
+          retry_after_ms: retryAfterMs,
+          metadata,
+        });
       }
-      return {
+      return omitUndefined({
         message: normalizeString(parsed?.message) || trimmed,
         type: normalizeString(parsed?.type) || 'upstream_error',
         code: parsed?.code ?? upstreamErrorCode(status),
-      };
+        retry_after_ms: retryAfterMs,
+        metadata,
+      });
     } catch {
-      return {
+      return omitUndefined({
         message: trimmed,
         type: 'upstream_error',
         code: upstreamErrorCode(status),
-      };
+        retry_after_ms: retryAfterMs,
+        metadata,
+      });
     }
   }
-  return {
+  return omitUndefined({
     message: `${providerName} upstream returned HTTP ${status}`,
     type: 'upstream_error',
     code: upstreamErrorCode(status),
-  };
+    retry_after_ms: retryAfterMs,
+    metadata,
+  });
+}
+
+function buildUpstreamErrorMetadata(headers?: Headers | null): JsonRecord | undefined {
+  if (!headers) {
+    return undefined;
+  }
+  const requestId = normalizeString(headers.get('x-request-id') ?? headers.get('request-id'));
+  const region = normalizeString(headers.get('x-ms-region') ?? headers.get('openai-processing-ms'));
+  const rateLimitHeaders = collectRateLimitHeaders(headers);
+  if (!requestId && !region && !rateLimitHeaders) {
+    return undefined;
+  }
+  return omitUndefined({
+    request_id: requestId || undefined,
+    region: region || undefined,
+    rate_limit_headers: rateLimitHeaders ?? undefined,
+  });
+}
+
+function collectRateLimitHeaders(headers: Headers): JsonRecord | undefined {
+  const values: JsonRecord = {};
+  for (const [key, value] of headers.entries()) {
+    const normalizedKey = key.toLowerCase();
+    if (!normalizedKey.startsWith('x-ratelimit-') && !normalizedKey.startsWith('ratelimit-')) {
+      continue;
+    }
+    const normalizedValue = normalizeString(value);
+    if (!normalizedValue) {
+      continue;
+    }
+    values[normalizedKey] = normalizedValue;
+  }
+  return Object.keys(values).length > 0 ? values : undefined;
 }
 
 function normalizeRetryCapabilities(capabilities: OpenAICompatibleRetryCapabilities | null | undefined): {
@@ -659,6 +717,12 @@ function normalizePath(value: unknown): string {
     return '';
   }
   return normalized.startsWith('/') ? normalized : `/${normalized}`;
+}
+
+function omitUndefined<T extends JsonRecord>(value: T): T {
+  return Object.fromEntries(
+    Object.entries(value).filter(([, entry]) => entry !== undefined),
+  ) as T;
 }
 
 export async function reserveLocalPort(): Promise<number> {
