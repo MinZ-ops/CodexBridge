@@ -1,5 +1,6 @@
 import {
   MissionWorkflowLoader,
+  createMissionStopRequest,
   createMission,
   createMissionAttemptPromptContract,
   createMissionChecklistSnapshot,
@@ -160,7 +161,7 @@ export function createMissionControlledAgentJobView(job: AgentJob): AgentJob {
     cwd: mission.cwd ?? job.cwd,
     status: mapMissionStatusToAgentJobStatus(mission.status),
     running: ACTIVE_MISSION_JOB_STATUS_SET.has(mission.status),
-    stopRequested: mission.status === 'stopped',
+    stopRequested: Boolean(mission.stopRequest) || mission.status === 'stopped',
     maxAttempts: mission.maxAttempts,
     attemptCount: mission.attemptCount,
     lastRunAt: mission.lastRunAt,
@@ -514,6 +515,7 @@ function createMissionFromAgentJob(
     resultArtifacts: [...(job.resultArtifacts ?? [])],
     lastError: job.lastError,
     statusReason: job.lastError ?? job.verificationSummary,
+    stopRequest: null,
     pendingApproval: null,
     lease: null,
     workpad: {
@@ -528,6 +530,13 @@ function createMissionFromAgentJob(
     createdAt: job.createdAt,
     updatedAt: job.updatedAt,
   });
+  return job.stopRequested && mission.status !== 'stopped'
+    ? createMissionStopRequest(mission, {
+      at: job.updatedAt,
+      actorType: 'host',
+      reason: job.lastError ?? 'Agent job stop requested.',
+    })
+    : mission;
 }
 
 function createSyntheticAttempt(

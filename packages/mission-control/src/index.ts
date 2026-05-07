@@ -1,6 +1,6 @@
 export const MISSION_CONTROL_PACKAGE_NAME = '@codexbridge/mission-control' as const;
 
-export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-9c-package-owned-supervision-foundation' as const;
+export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-9d-persisted-stop-intents' as const;
 
 export const MISSION_CONTROL_OWNS = [
   'mission-domain-model',
@@ -18,6 +18,7 @@ export const MISSION_CONTROL_OWNS = [
   'source-backed-mission-creation',
   'progress-sink-contract',
   'supervision-foundation',
+  'persisted-stop-intents',
 ] as const;
 
 export const MISSION_CONTROL_DOES_NOT_OWN = [

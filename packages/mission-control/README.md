@@ -36,7 +36,7 @@ It must not own bridge behavior:
 
 Current phase:
 
-- `phase-9c-package-owned-supervision-foundation`: package-owned mission
+- `phase-9d-persisted-stop-intents`: package-owned mission
   domain/workflow/workspace/provider/verifier/runtime foundations, first-class
   `WorkItem` / `ChecklistSnapshot` / `PlanChangeRequest` /
   `MissionGeneration` lineage, direct in-process `commands / queries / streams`
@@ -49,8 +49,11 @@ Current phase:
   repository-backed progress sink that lets providers/hosts append workpad
   progress without mutating lifecycle truth. The package now also exports a
   first `MissionSupervisor` foundation that recovers stale leases, rebuilds
-  status snapshots from authoritative repository state, and runs supervisable
-  missions until idle without requiring `loop.sh` to own runtime truth.
+  status snapshots from authoritative repository state, runs supervisable
+  missions until idle without requiring `loop.sh` to own runtime truth, and
+  persists explicit mission stop requests that runtime/supervision consume at
+  safe checkpoints instead of treating host-side stop UX as the source of
+  lifecycle truth.
 
 This package should preserve the Symphony-style separation between:
 

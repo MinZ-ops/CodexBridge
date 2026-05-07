@@ -9,6 +9,7 @@ import type {
   MissionPriority,
   MissionRiskLevel,
   MissionSource,
+  MissionStopRequest,
   MissionStatus,
   PlanChangeRequest,
   WorkItem,
@@ -133,6 +134,7 @@ export interface MissionAttemptsView {
 
 export interface MissionExecutionView {
   missionId: string;
+  stopRequest: MissionStopRequest | null;
   pendingApproval: MissionPendingApproval | null;
   latestCycleResult: MissionCycleResult | null;
   hostBindings: MissionHostBindingView;

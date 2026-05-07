@@ -6,6 +6,7 @@ import type {
   MissionGeneration,
   MissionGenerationStatus,
   MissionLoopPolicy,
+  MissionStopRequest,
   MissionStatus,
   WorkItem,
 } from './types.js';
@@ -98,6 +99,7 @@ export function normalizeMissionRecord(mission: Mission): Mission {
     plan: normalizeStringList(mission.plan),
     maxAttempts: loopPolicy.maxAttempts ?? normalizePositiveInteger(mission.maxAttempts) ?? 1,
     maxTurns: loopPolicy.maxTurns ?? normalizePositiveInteger(mission.maxTurns) ?? 1,
+    stopRequest: normalizeMissionStopRequest(mission.stopRequest),
     workpad: {
       ...mission.workpad,
       latestPlan: mission.workpad.latestPlan.length > 0
@@ -258,6 +260,7 @@ export function createMissionRetryAggregate(
     resultArtifacts: [],
     lastError: null,
     statusReason: normalizeText(options.reason) ?? 'Mission queued for retry.',
+    stopRequest: null,
     pendingApproval: null,
     lease: null,
     workpad: {
@@ -407,6 +410,25 @@ function normalizePositiveInteger(value: number | null | undefined): number | nu
   }
   const normalized = Math.trunc(value);
   return normalized > 0 ? normalized : null;
+}
+
+function normalizeMissionStopRequest(
+  value: MissionStopRequest | null | undefined,
+): MissionStopRequest | null {
+  if (!value || typeof value !== 'object') {
+    return null;
+  }
+  const reason = normalizeText(value.reason) ?? 'Mission stop requested.';
+  const requestedAt = normalizePositiveInteger(value.requestedAt) ?? Date.now();
+  return {
+    requestId: normalizeText(value.requestId) ?? null,
+    actorId: normalizeText(value.actorId) ?? null,
+    actorType: value.actorType === 'user' || value.actorType === 'host' || value.actorType === 'system'
+      ? value.actorType
+      : 'system',
+    reason,
+    requestedAt,
+  };
 }
 
 function normalizeStringList(values: readonly string[] | null | undefined): string[] {

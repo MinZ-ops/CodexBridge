@@ -3,6 +3,7 @@ import type {
   Mission,
   MissionLease,
   MissionPendingApproval,
+  MissionStopRequest,
   MissionStatus,
   MissionWorkpad,
 } from './types.js';
@@ -114,6 +115,7 @@ export function createMission(input: CreateMissionInput): Mission {
     resultArtifacts: [],
     lastError: null,
     statusReason: null,
+    stopRequest: null,
     pendingApproval: null,
     lease: null,
     workpad: createMissionWorkpad(now),
@@ -135,6 +137,7 @@ export function assertMissionStatusTransition(from: MissionStatus, to: MissionSt
 export interface TransitionMissionOptions {
   at?: number;
   reason?: string | null;
+  stopRequest?: MissionStopRequest | null;
   pendingApproval?: MissionPendingApproval | null;
   lease?: MissionLease | null;
   activeAttemptId?: string | null;
@@ -157,6 +160,9 @@ export function transitionMission(
     status: nextStatus,
     updatedAt: at,
     statusReason: options.reason ?? mission.statusReason,
+    stopRequest: options.stopRequest !== undefined
+      ? cloneStopRequest(options.stopRequest)
+      : cloneStopRequest(mission.stopRequest),
     pendingApproval: options.pendingApproval !== undefined ? options.pendingApproval : mission.pendingApproval,
     lease: options.lease !== undefined ? options.lease : mission.lease,
     activeAttemptId: options.activeAttemptId !== undefined ? options.activeAttemptId : mission.activeAttemptId,
@@ -170,21 +176,28 @@ export function transitionMission(
     next.completedAt = at;
     next.stoppedAt = null;
     next.archivedAt = null;
+    next.stopRequest = null;
     next.pendingApproval = null;
     next.lease = null;
   }
   if (nextStatus === 'stopped') {
     next.stoppedAt = at;
+    next.stopRequest = null;
     next.pendingApproval = null;
     next.lease = null;
   }
   if (nextStatus === 'archived') {
     next.archivedAt = at;
+    next.stopRequest = null;
     next.pendingApproval = null;
     next.lease = null;
   }
   if (nextStatus === 'queued') {
     next.stoppedAt = null;
+    next.stopRequest = null;
+  }
+  if (nextStatus === 'failed') {
+    next.stopRequest = null;
   }
   if (nextStatus === 'running') {
     next.lastRunAt = at;
@@ -219,4 +232,13 @@ function normalizeText(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function cloneStopRequest(value: MissionStopRequest | null | undefined): MissionStopRequest | null {
+  if (!value) {
+    return null;
+  }
+  return {
+    ...value,
+  };
 }

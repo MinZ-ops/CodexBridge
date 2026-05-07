@@ -71,6 +71,7 @@ export type MissionVerifierVerdict =
 export type MissionEventKind =
   | 'mission.created'
   | 'mission.queued'
+  | 'mission.stop_requested'
   | 'mission.planning'
   | 'mission.started'
   | 'mission.progress'
@@ -108,6 +109,14 @@ export interface MissionPendingApproval {
   summary: string;
   options: MissionPendingApprovalOption[];
   createdAt: number;
+}
+
+export interface MissionStopRequest {
+  requestId: string | null;
+  actorId: string | null;
+  actorType: 'user' | 'host' | 'system';
+  reason: string;
+  requestedAt: number;
 }
 
 export interface MissionLease {
@@ -256,6 +265,7 @@ export interface Mission {
   resultArtifacts: unknown[];
   lastError: string | null;
   statusReason: string | null;
+  stopRequest: MissionStopRequest | null;
   pendingApproval: MissionPendingApproval | null;
   lease: MissionLease | null;
   workpad: MissionWorkpad;

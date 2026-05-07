@@ -10,6 +10,7 @@ import {
   MissionSupervisor,
   MissionWorkspaceService,
   createMission,
+  createMissionStopRequest,
   createMissionSupervisionSnapshot,
   createMissionVerifierResult,
   transitionMission,
@@ -417,4 +418,130 @@ continuation: allow
   assert.equal(secondReport.cycles.length, 1);
   assert.equal(repo.getMissionById(missionB.id)?.status, 'completed');
   assert.equal(verifierCalls, 2);
+});
+
+test('mission supervisor materializes persisted stop requests before dispatching more work', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-control-supervision-stop-cwd-'));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-control-supervision-stop-state-'));
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-control-supervision-stop-root-'));
+  writeWorkflow(cwd, `
+version: 1
+maxTurns: 4
+maxAttempts: 3
+continuation: allow
+`);
+  const repo = new JsonFileMissionRepository(stateDir);
+  const nowRef = { value: 1_701_000_200_000 };
+
+  const queuedMission = createMissionStopRequest(createQueuedMission({
+    id: 'mission-supervision-stop-queued',
+    cwd,
+    now: nowRef.value,
+  }), {
+    at: nowRef.value + 20,
+    actorType: 'host',
+    reason: 'Stop the queued mission before it starts.',
+  });
+  repo.saveMission(queuedMission);
+
+  const runningBase = transitionMission(createQueuedMission({
+    id: 'mission-supervision-stop-running',
+    cwd,
+    now: nowRef.value + 100,
+  }), 'running', {
+    at: nowRef.value + 140,
+    activeAttemptId: 'attempt-supervision-stop-running-1',
+  });
+  const runningMission = createMissionStopRequest({
+    ...runningBase,
+    lease: {
+      ownerId: 'stale-stop-worker',
+      acquiredAt: nowRef.value - 1_000,
+      heartbeatAt: nowRef.value - 1_000,
+      expiresAt: nowRef.value - 1,
+      releasedAt: null,
+    },
+  }, {
+    at: nowRef.value + 150,
+    actorType: 'host',
+    reason: 'Stop the stale running mission after recovery.',
+  });
+  repo.saveMission(runningMission);
+  repo.saveAttempt({
+    id: 'attempt-supervision-stop-running-1',
+    missionId: runningMission.id,
+    generationId: runningMission.activeGenerationId,
+    generationIndex: runningMission.activeGenerationIndex,
+    checklistSnapshotId: runningMission.currentChecklistSnapshotId,
+    index: 1,
+    status: 'running',
+    providerRunId: 'run-supervision-stop-running-1',
+    providerThreadId: 'thread-supervision-stop-running-1',
+    promptDigest: 'digest-supervision-stop-running-1',
+    verifierVerdict: null,
+    verifierSummary: null,
+    missingAcceptanceCriteria: [],
+    outputPreview: 'Partial progress before stop.',
+    error: null,
+    startedAt: nowRef.value - 900,
+    endedAt: null,
+    createdAt: nowRef.value - 900,
+    updatedAt: nowRef.value - 900,
+  });
+
+  let providerStarts = 0;
+  const provider: MissionProvider = {
+    kind: 'fake-provider',
+    async start() {
+      providerStarts += 1;
+      return {
+        providerRunId: `run-supervision-stop-${providerStarts}`,
+        providerThreadId: 'thread-supervision-stop',
+      };
+    },
+    async continue() {
+      throw new Error('stop-request supervision test should not continue provider turns');
+    },
+    async wait() {
+      throw new Error('stop-request supervision test should not wait on provider turns');
+    },
+    async interrupt() {},
+  };
+
+  const verifier: MissionVerifier = {
+    async verify() {
+      throw new Error('stop-request supervision test should not invoke the verifier');
+    },
+  };
+
+  const harness = createRuntimeHarness({
+    repository: repo,
+    provider,
+    verifier,
+    rootDir,
+    nowRef,
+  });
+  const supervisor = new MissionSupervisor({
+    repository: repo,
+    runtime: harness.runtime,
+    leaseCoordinator: harness.leaseCoordinator,
+    now: () => nowRef.value,
+  });
+
+  const report = await supervisor.runUntilIdle({
+    ownerId: 'supervisor-stop',
+    readOnly: true,
+    allowSharedCwd: true,
+  });
+
+  assert.equal(report.stopReason, 'idle');
+  assert.equal(report.cycles.length, 0);
+  assert.equal(providerStarts, 0);
+  assert.deepEqual(report.stoppedMissionIds.sort(), [
+    queuedMission.id,
+    runningMission.id,
+  ]);
+  assert.equal(repo.getMissionById(queuedMission.id)?.status, 'stopped');
+  assert.equal(repo.getMissionById(runningMission.id)?.status, 'stopped');
+  assert.equal(repo.getAttemptById('attempt-supervision-stop-running-1')?.status, 'stopped');
 });

@@ -119,7 +119,7 @@ export function buildAgentJobMissionPatch(
   return {
     status: mapMissionStatusToAgentJobStatus(mission.status),
     running: ACTIVE_MISSION_JOB_STATUS_SET.has(mission.status),
-    stopRequested: mission.status === 'stopped',
+    stopRequested: Boolean(mission.stopRequest) || mission.status === 'stopped',
     attemptCount: mission.attemptCount,
     lastRunAt: mission.lastRunAt,
     completedAt: TERMINAL_MISSION_JOB_STATUS_SET.has(mission.status)

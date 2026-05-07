@@ -17,7 +17,7 @@ import {
 import type { MissionAttempt, MissionEvent } from '../src/index.js';
 
 test('mission control package exposes the current Mission Control phase marker', () => {
-  assert.equal(MISSION_CONTROL_PACKAGE_PHASE, 'phase-9c-package-owned-supervision-foundation');
+  assert.equal(MISSION_CONTROL_PACKAGE_PHASE, 'phase-9d-persisted-stop-intents');
 });
 
 test('mission state transitions are explicit and reject invalid transitions', () => {

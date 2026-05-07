@@ -91,6 +91,18 @@ Main remaining integration gap:
     state instead of requiring bridge-local shell supervision
   - paused human-facing states remain explicit host-controlled resumptions, so
     the bridge still owns user-facing resume intent and approval UX
+- Phase 9d now adds package-owned persisted stop-intent semantics on top of
+  that supervision foundation:
+  - `/agent stop` now routes through the package command layer as an
+    authoritative `stopRequest` instead of forcing the bridge projection to
+    synthesize terminal mission truth first
+  - active runtime/supervision paths consume that persisted stop request at
+    safe checkpoints and materialize the final `stopped` state inside the
+    package, while host-side thread/session interruption remains a best-effort
+    execution hook
+  - stopped attempts can now be derived from authoritative mission history even
+    after stale-lease recovery clears `activeAttemptId`, so package supervision
+    remains the authority for stop reconciliation instead of bridge-local state
 - `/agent` `list/show/stop/retry` now consume that package API through an
   authoritative mission repository plus `AgentJob` projection instead of
   rebuilding runtime truth directly from bridge compatibility fields
@@ -103,9 +115,10 @@ Main remaining integration gap:
   state can retain bridge-delivered progress without letting the host mutate
   lifecycle truth directly
 - the next hardening work is finishing source sync beyond initial manual
-  creation, wiring explicit stop-intent semantics through package supervision,
-  and continuing to thin the remaining bridge projection seams so future
-  Telegram, CLI, or web hosts do not re-implement bridge-local runtime logic
+  creation, reducing long-lived `loop.sh` reliance to a real operational
+  fallback, and continuing to thin the remaining bridge projection seams so
+  future Telegram, CLI, or web hosts do not re-implement bridge-local runtime
+  logic
 
 ## V0 Migration Baseline Sources
 

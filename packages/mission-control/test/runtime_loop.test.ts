@@ -9,6 +9,7 @@ import {
   MissionRuntime,
   MissionWorkspaceService,
   createMission,
+  createMissionStopRequest,
   createMissionVerifierResult,
   transitionMission,
 } from '../src/index.js';
@@ -624,4 +625,100 @@ test('mission runtime stopMission interrupts the active provider run and marks t
   const eventKinds = repo.listEvents(runningMission.id).map((event) => event.kind);
   assert.ok(eventKinds.includes('attempt.stopped'));
   assert.ok(eventKinds.includes('mission.stopped'));
+});
+
+test('mission runtime consumes persisted stop requests before starting another provider turn', async () => {
+  const cwd = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-control-runtime-stop-request-cwd-'));
+  const stateDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-control-runtime-stop-request-state-'));
+  const rootDir = fs.mkdtempSync(path.join(os.tmpdir(), 'mission-control-runtime-stop-request-root-'));
+  writeWorkflow(cwd, `
+version: 1
+maxTurns: 4
+maxAttempts: 3
+continuation: allow
+`);
+  const repo = new JsonFileMissionRepository(stateDir);
+  const nowRef = { value: 1_700_830_100_000 };
+  let providerStarts = 0;
+
+  const provider: MissionProvider = {
+    kind: 'fake-provider',
+    async start() {
+      providerStarts += 1;
+      return {
+        providerRunId: `run-stop-request-${providerStarts}`,
+        providerThreadId: 'thread-stop-request',
+      };
+    },
+    async continue() {
+      throw new Error('continue should not be called in stop-request test');
+    },
+    async wait() {
+      throw new Error('wait should not be called in stop-request test');
+    },
+    async interrupt() {},
+  };
+
+  const verifier: MissionVerifier = {
+    async verify() {
+      throw new Error('verify should not be called in stop-request test');
+    },
+  };
+
+  const runningMission = createMissionStopRequest(transitionMission(createQueuedMission({
+    id: 'mission-runtime-stop-request',
+    cwd,
+    now: nowRef.value,
+  }), 'running', {
+    at: nowRef.value + 20,
+    activeAttemptId: 'attempt-runtime-stop-request-1',
+  }), {
+    at: nowRef.value + 25,
+    actorType: 'host',
+    reason: 'Stop before the next provider turn starts.',
+  });
+  repo.saveMission(runningMission);
+  repo.saveAttempt({
+    id: 'attempt-runtime-stop-request-1',
+    missionId: runningMission.id,
+    generationId: runningMission.activeGenerationId,
+    generationIndex: runningMission.activeGenerationIndex,
+    checklistSnapshotId: runningMission.currentChecklistSnapshotId,
+    index: 1,
+    status: 'running',
+    providerRunId: null,
+    providerThreadId: null,
+    promptDigest: null,
+    verifierVerdict: null,
+    verifierSummary: null,
+    missingAcceptanceCriteria: [],
+    outputPreview: null,
+    error: null,
+    startedAt: null,
+    endedAt: null,
+    createdAt: nowRef.value + 20,
+    updatedAt: nowRef.value + 20,
+  });
+
+  const runtime = createRuntimeHarness({
+    repository: repo,
+    provider,
+    verifier,
+    rootDir,
+    nowRef,
+  });
+  const result = await runtime.runMission(runningMission.id, {
+    ownerId: 'worker-runtime-stop-request',
+    readOnly: true,
+    allowSharedCwd: true,
+  });
+
+  assert.equal(providerStarts, 0);
+  assert.equal(result.mission.status, 'stopped');
+  assert.equal(result.mission.stopRequest, null);
+  assert.equal(repo.getAttemptById('attempt-runtime-stop-request-1')?.status, 'stopped');
+  assert.deepEqual(
+    repo.listEvents(runningMission.id).slice(-1).map((event) => event.kind),
+    ['mission.stopped'],
+  );
 });

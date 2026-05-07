@@ -1,6 +1,11 @@
 import crypto from 'node:crypto';
 import fs from 'node:fs';
 import {
+  createMissionStopRequest,
+  materializeMissionStop,
+  resolveMissionStopReason,
+} from './control_actions.js';
+import {
   createMissionChecklistSnapshot,
   createMissionGeneration,
   createMissionWorkItem,
@@ -116,14 +121,26 @@ export class MissionRuntime {
   ): Promise<MissionRunResult> {
     let mission = this.ensureMissionDomainRecords(this.requireMission(missionId));
     const initialEventCount = this.repository.listEvents(mission.id).length;
-    mission = this.leaseCoordinator.claimMission(mission.id, {
-      ownerId: options.ownerId,
-    });
-
     let workflow: LoadedMissionWorkflow | null = null;
     let lastAttempt: MissionAttempt | null = null;
     let lastProviderResult: MissionProviderResult | null = null;
     let lastVerifierResult: MissionVerifierResult | null = null;
+    mission = this.leaseCoordinator.claimMission(mission.id, {
+      ownerId: options.ownerId,
+    });
+    const claimedStop = await this.consumePersistedStopRequest(mission.id, options.ownerId, {
+      interruptProvider: true,
+    });
+    if (claimedStop.stopped) {
+      return this.finalizeRun(claimedStop.mission, options.ownerId, initialEventCount, {
+        attempt: claimedStop.attempt,
+        workflow: null,
+        providerResult: null,
+        verifierResult: null,
+      });
+    }
+    mission = claimedStop.mission;
+    lastAttempt = claimedStop.attempt;
 
     try {
       const workflowResult = this.workflowLoader.tryLoad({
@@ -172,9 +189,34 @@ export class MissionRuntime {
         workspacePath: workspace.workspacePath,
         workflowPath: workflow.source.path,
       });
+      const workspaceStop = await this.consumePersistedStopRequest(mission.id, options.ownerId, {
+        interruptProvider: true,
+      });
+      if (workspaceStop.stopped) {
+        return this.finalizeRun(workspaceStop.mission, options.ownerId, initialEventCount, {
+          attempt: workspaceStop.attempt,
+          workflow,
+          providerResult: null,
+          verifierResult: null,
+        });
+      }
+      mission = workspaceStop.mission;
+      lastAttempt = workspaceStop.attempt;
 
       for (;;) {
         mission = this.requireMission(mission.id);
+        const loopStop = await this.consumePersistedStopRequest(mission.id, options.ownerId, {
+          interruptProvider: true,
+        });
+        if (loopStop.stopped) {
+          return this.finalizeRun(loopStop.mission, options.ownerId, initialEventCount, {
+            attempt: loopStop.attempt,
+            workflow,
+            providerResult: lastProviderResult,
+            verifierResult: lastVerifierResult,
+          });
+        }
+        mission = loopStop.mission;
         if (mission.status === 'verifying') {
           const verifyingAttempt = this.requireActiveAttempt(mission);
           lastAttempt = verifyingAttempt;
@@ -185,6 +227,7 @@ export class MissionRuntime {
             attempt: verifyingAttempt,
             workflow,
             providerResult,
+            ownerId: options.ownerId,
           });
           mission = verification.mission;
           lastAttempt = verification.attempt;
@@ -214,6 +257,7 @@ export class MissionRuntime {
           workflow,
           workspace,
           promptText: execution.promptText,
+          ownerId: options.ownerId,
           waitTimeoutMs: options.waitTimeoutMs,
         });
         mission = providerRun.mission;
@@ -273,37 +317,28 @@ export class MissionRuntime {
     },
   ): Promise<Mission> {
     const mission = this.requireMission(missionId);
-    const attempt = mission.activeAttemptId ? this.repository.getAttemptById(mission.activeAttemptId) : null;
+    if (
+      mission.status === 'stopped'
+      || mission.status === 'completed'
+      || mission.status === 'failed'
+      || mission.status === 'archived'
+    ) {
+      return mission;
+    }
     const reason = normalizeText(options.reason) ?? 'Mission stopped.';
-    if (attempt?.providerRunId) {
-      await this.provider.interrupt(attempt.providerRunId);
-    }
-    if (attempt) {
-      this.repository.saveAttempt({
-        ...attempt,
-        status: 'stopped',
-        error: reason,
-        endedAt: this.now(),
-        updatedAt: this.now(),
-      });
-      this.appendAttemptEvent(mission, attempt, 'attempt.stopped', reason, {
-        providerRunId: attempt.providerRunId,
-      });
-    }
-    const next = transitionMission(mission, 'stopped', {
+    const requested = createMissionStopRequest(mission, {
       at: this.now(),
-      reason,
-      lastError: reason,
-      activeAttemptId: attempt?.id ?? mission.activeAttemptId,
-    });
-    this.saveMission(next);
-    this.appendMissionEvent(next, 'mission.stopped', reason, attempt, {
-      ownerId: options.ownerId,
-    });
-    return this.leaseCoordinator.releaseMission(next.id, {
-      ownerId: options.ownerId,
+      actorId: options.ownerId,
+      actorType: 'system',
       reason,
     });
+    this.saveMission(requested);
+    this.appendMissionEvent(requested, 'mission.stop_requested', reason, null, {
+      ownerId: options.ownerId,
+    });
+    return (await this.consumePersistedStopRequest(requested.id, options.ownerId, {
+      interruptProvider: true,
+    })).mission;
   }
 
   private prepareExecution(input: {
@@ -434,6 +469,7 @@ export class MissionRuntime {
     workflow: LoadedMissionWorkflow;
     workspace: MissionWorkspaceAssignment;
     promptText: string;
+    ownerId: string;
     waitTimeoutMs?: number;
   }): Promise<{
     mission: Mission;
@@ -521,6 +557,18 @@ export class MissionRuntime {
         providerTurn: true,
         turnIndex,
       });
+      const startedStop = await this.consumePersistedStopRequest(mission.id, input.ownerId, {
+        interruptProvider: true,
+      });
+      if (startedStop.stopped) {
+        return {
+          mission: startedStop.mission,
+          attempt: startedStop.attempt ?? attempt,
+          providerResult: null,
+        };
+      }
+      mission = startedStop.mission;
+      attempt = startedStop.attempt ?? attempt;
 
       const providerResult = await this.provider.wait(started.providerRunId, {
         timeoutMs: input.waitTimeoutMs,
@@ -544,6 +592,18 @@ export class MissionRuntime {
         artifactCount: providerResult.artifacts.length,
         artifactBytes,
       });
+      const waitedStop = await this.consumePersistedStopRequest(mission.id, input.ownerId, {
+        interruptProvider: false,
+      });
+      if (waitedStop.stopped) {
+        return {
+          mission: waitedStop.mission,
+          attempt: waitedStop.attempt ?? attempt,
+          providerResult,
+        };
+      }
+      mission = waitedStop.mission;
+      attempt = waitedStop.attempt ?? attempt;
 
       if ((providerResult.outcome === 'partial' || providerResult.outcome === 'missing')
         && input.workflow.policy.continuation === 'allow') {
@@ -757,6 +817,7 @@ export class MissionRuntime {
     attempt: MissionAttempt;
     workflow: LoadedMissionWorkflow;
     providerResult: MissionProviderResult;
+    ownerId: string;
   }): Promise<{
     mission: Mission;
     attempt: MissionAttempt;
@@ -782,6 +843,17 @@ export class MissionRuntime {
       runtimeMs: usage.runtimeMs,
       artifactBytes: usage.artifactBytes,
     });
+    const requestedStop = await this.consumePersistedStopRequest(input.mission.id, input.ownerId, {
+      interruptProvider: false,
+    });
+    if (requestedStop.stopped) {
+      return {
+        mission: requestedStop.mission,
+        attempt: requestedStop.attempt ?? input.attempt,
+        verifierResult,
+        continueMission: false,
+      };
+    }
     const budget = resolveMissionVerifierBudget({
       mission: input.mission,
       workflow: input.workflow,
@@ -1311,6 +1383,68 @@ export class MissionRuntime {
     return persistedMission;
   }
 
+  private async consumePersistedStopRequest(
+    missionId: string,
+    ownerId: string,
+    options: {
+      interruptProvider: boolean;
+    },
+  ): Promise<{
+    mission: Mission;
+    attempt: MissionAttempt | null;
+    stopped: boolean;
+  }> {
+    const mission = this.requireMission(missionId);
+    if (!mission.stopRequest) {
+      const attempt = mission.activeAttemptId ? this.repository.getAttemptById(mission.activeAttemptId) : null;
+      return {
+        mission,
+        attempt,
+        stopped: false,
+      };
+    }
+    const reason = resolveMissionStopReason(mission);
+    let attempt = mission.activeAttemptId
+      ? this.repository.getAttemptById(mission.activeAttemptId)
+      : findLatestStoppableAttempt(this.repository, mission.id);
+    if (options.interruptProvider && attempt?.providerRunId) {
+      await this.provider.interrupt(attempt.providerRunId);
+    }
+    if (attempt && !isTerminalAttemptStatus(attempt.status)) {
+      attempt = this.repository.saveAttempt({
+        ...attempt,
+        status: 'stopped',
+        error: reason,
+        endedAt: attempt.endedAt ?? this.now(),
+        updatedAt: this.now(),
+      });
+      this.appendAttemptEvent(mission, attempt, 'attempt.stopped', reason, {
+        providerRunId: attempt.providerRunId,
+        stopRequestId: mission.stopRequest.requestId,
+        actorId: mission.stopRequest.actorId,
+        actorType: mission.stopRequest.actorType,
+      });
+    }
+    let stoppedMission = materializeMissionStop(mission, {
+      at: this.now(),
+      reason,
+      lastError: reason,
+      activeAttemptId: attempt?.id ?? mission.activeAttemptId,
+    });
+    stoppedMission = this.saveMission(stoppedMission);
+    this.appendMissionEvent(stoppedMission, 'mission.stopped', reason, attempt, {
+      stopRequestId: mission.stopRequest.requestId,
+      actorId: mission.stopRequest.actorId,
+      actorType: mission.stopRequest.actorType,
+    });
+    stoppedMission = this.releaseLeaseSafely(stoppedMission.id, ownerId);
+    return {
+      mission: stoppedMission,
+      attempt,
+      stopped: true,
+    };
+  }
+
   private syncMissionDomainRecords(mission: Mission): void {
     const normalizedMission = normalizeMissionRecord(mission);
     const existingWorkItem = this.repository.getWorkItemById(normalizedMission.workItemId);
@@ -1419,6 +1553,38 @@ function normalizeText(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function isTerminalAttemptStatus(status: MissionAttempt['status']): boolean {
+  return (
+    status === 'completed'
+    || status === 'failed'
+    || status === 'stopped'
+    || status === 'waiting_user'
+    || status === 'needs_human'
+    || status === 'handoff'
+    || status === 'blocked'
+  );
+}
+
+function findLatestStoppableAttempt(
+  repository: MissionRepository,
+  missionId: string,
+): MissionAttempt | null {
+  const attempts = repository.listAttempts(missionId)
+    .filter((attempt) => !isTerminalAttemptStatus(attempt.status))
+    .sort((left, right) => {
+      const leftGeneration = left.generationIndex ?? 0;
+      const rightGeneration = right.generationIndex ?? 0;
+      if (leftGeneration !== rightGeneration) {
+        return rightGeneration - leftGeneration;
+      }
+      if (left.index !== right.index) {
+        return right.index - left.index;
+      }
+      return right.updatedAt - left.updatedAt;
+    });
+  return attempts[0] ?? null;
 }
 
 function formatErrorMessage(error: unknown): string {

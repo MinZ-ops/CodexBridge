@@ -477,11 +477,70 @@ test('direct mission control api commands persist retry, resume, and stop transi
       },
     },
   });
-  assert.equal(stopResult.data.mission.status, 'stopped');
-  assert.equal(repo.getAttemptById(stopAttempt.id)?.status, 'stopped');
+  assert.equal(stopResult.data.mission.status, 'running');
+  assert.equal(stopResult.data.mission.stopRequest?.reason, 'Stop requested by the host.');
+  assert.equal(repo.getAttemptById(stopAttempt.id)?.status, 'running');
+  assert.equal(repo.getMissionById(stopMission.id)?.stopRequest?.actorType, 'host');
   assert.deepEqual(
-    repo.listEvents(stopMission.id).slice(-2).map((event) => event.kind),
-    ['attempt.stopped', 'mission.stopped'],
+    repo.listEvents(stopMission.id).slice(-1).map((event) => event.kind),
+    ['mission.stop_requested'],
+  );
+
+  const pausedStopBase = createQueuedMission(nowRef.value + 3_000);
+  const pausedStopRunning = transitionMission(pausedStopBase, 'running', {
+    at: nowRef.value + 3_020,
+    activeAttemptId: 'attempt-api-stop-paused-1',
+  });
+  const pausedStopMission = transitionMission(pausedStopRunning, 'waiting_user', {
+    at: nowRef.value + 3_030,
+    reason: 'Need the deployment window.',
+    lastError: 'Need the deployment window.',
+  });
+  const pausedStopAttempt: MissionAttempt = {
+    id: 'attempt-api-stop-paused-1',
+    missionId: pausedStopMission.id,
+    generationId: pausedStopMission.activeGenerationId,
+    generationIndex: pausedStopMission.activeGenerationIndex,
+    checklistSnapshotId: pausedStopMission.currentChecklistSnapshotId,
+    index: 1,
+    status: 'waiting_user',
+    providerRunId: 'run-api-stop-paused-1',
+    providerThreadId: 'thread-api-stop-paused-1',
+    promptDigest: 'digest-api-stop-paused-1',
+    verifierVerdict: null,
+    verifierSummary: 'Need the deployment window.',
+    missingAcceptanceCriteria: [],
+    outputPreview: 'Waiting for the deployment window.',
+    error: 'Need the deployment window.',
+    startedAt: nowRef.value + 3_020,
+    endedAt: nowRef.value + 3_030,
+    createdAt: nowRef.value + 3_020,
+    updatedAt: nowRef.value + 3_030,
+  };
+  repo.saveMission(pausedStopMission);
+  repo.saveWorkItem(createMissionWorkItem(pausedStopMission, { at: nowRef.value + 3_010 }));
+  repo.saveAttempt(pausedStopAttempt);
+
+  const pausedStopResult = await api.commands.stopMission({
+    meta: {
+      requestId: 'req-stop-2',
+      correlationId: 'corr-stop-2',
+      idempotencyKey: null,
+    },
+    input: {
+      missionId: pausedStopMission.id,
+      reason: 'Stop the paused mission instead of resuming it.',
+      actor: {
+        actorId: 'bridge',
+        actorType: 'host',
+      },
+    },
+  });
+  assert.equal(pausedStopResult.data.mission.status, 'stopped');
+  assert.equal(pausedStopResult.data.mission.stopRequest, null);
+  assert.deepEqual(
+    repo.listEvents(pausedStopMission.id).slice(-2).map((event) => event.kind),
+    ['mission.stop_requested', 'mission.stopped'],
   );
 });
 

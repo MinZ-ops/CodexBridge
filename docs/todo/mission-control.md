@@ -570,19 +570,27 @@ that:
   - `pnpm mission-control:test`
   - `pnpm mission-control:build`
   - `pnpm mission-control:check-boundary`
-  - `pnpm test --test-name-pattern "Mission Control|WORKFLOW\\.md|interrupted provider turn|normal partial provider exit|approval requests" test/core/bridge_coordinator.test.ts`
+  - `pnpm test --test-name-pattern "Mission Control|WORKFLOW\\.md|interrupted provider turn|normal partial provider exit|approval requests|show, retry, rename, stop, and delete manage queued jobs|list, show, result, stop, and retry prefer Mission Control runtime state" test/core/bridge_coordinator.test.ts`
   - `pnpm test --test-name-pattern "AgentJobService retryJob preserves Mission Control runtime history when re-queueing waiting-human missions|AgentJobService retryJob preserves prior runtime history for fresh reruns via a new mission generation" test/core/agent_job_service.test.ts`
 
-Phase 9c is the current validated baseline, but several behaviors above are
+Phase 9d landed: package-owned stop control now persists authoritative
+`stopRequest` mission records, exposes them through package query views, and
+lets runtime/supervision consume them at safe checkpoints so `/agent stop`
+does not need to synthesize terminal mission truth inside the bridge
+projection first. Stale-lease recovery no longer prevents the package from
+marking the latest non-terminal attempt as `stopped` when a stop request is
+already persisted.
+
+Phase 9d is the current validated baseline, but several behaviors above are
 still transitional:
 
 - `AgentJob` still carries bridge-side compatibility state that should keep
   shrinking toward a pure projection/cache
 - `/agent` reads still need to move further toward package-owned
   command/query/timeline contracts
-- source-backed mission sync beyond the initial manual create path, explicit
-  stop-intent semantics, and final `loop.sh` fallback reduction still belong to
-  the unfinished `Phase 9` backlog
+- source-backed mission sync beyond the initial manual create path and final
+  `loop.sh` fallback reduction still belong to the unfinished `Phase 9`
+  backlog
 
 ## Phase 7: Checklist-First Domain Hardening
 
@@ -685,6 +693,13 @@ resumptions, so package supervision can now own recovery/continuation for
 `queued` / `planning` / `running` / `verifying` / `repairing` missions without
 pulling `/auto` or bridge-local shell truth back into Mission Control.
 
+Phase 9d landed: Mission Control now persists explicit mission `stopRequest`
+control records, keeps them visible on package-owned execution/query views, and
+lets runtime/supervision materialize the final `stopped` state from that
+authoritative request instead of requiring bridge-local fake terminal writes
+first. Stopped attempts can now still be derived after stale-lease recovery
+clears `activeAttemptId`, so supervision owns stop reconciliation end-to-end.
+
 - [x] Add `WorkItemSourceAdapter` as the source abstraction
 - [x] Support manual host-created source-backed work items through the
   package-owned create command
@@ -697,7 +712,7 @@ pulling `/auto` or bridge-local shell truth back into Mission Control.
 - [x] Add package-owned supervision semantics that absorb the useful parts of
   `loop.sh`:
   - [x] status snapshots
-  - [ ] stop markers / stop intents
+  - [x] stop markers / stop intents
   - [x] bounded supervision loops
   - [x] stale-run recovery
   - [x] history retention

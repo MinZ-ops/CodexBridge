@@ -1,6 +1,7 @@
 import { getLatestMissionCycleResult, type MissionCycleResult } from './cycle_result.js';
 import { MissionLeaseCoordinator } from './lease_coordinator.js';
 import type { MissionRepository } from './repository.js';
+import { materializeMissionStop, resolveMissionStopReason } from './control_actions.js';
 import { isMissionResumable } from './state_machine.js';
 import type { MissionRunOptions, MissionRunResult, MissionRuntime } from './runtime.js';
 import type {
@@ -8,6 +9,7 @@ import type {
   MissionAttempt,
   MissionEvent,
   MissionPendingApproval,
+  MissionStopRequest,
   MissionStatus,
 } from './types.js';
 
@@ -24,6 +26,7 @@ export interface MissionSupervisionSnapshot {
   status: MissionStatus;
   resumable: boolean;
   supervisable: boolean;
+  stopRequest: MissionStopRequest | null;
   activeGenerationId: string;
   activeGenerationIndex: number;
   activeAttemptId: string | null;
@@ -66,6 +69,7 @@ export type MissionSupervisorStopReason =
 export interface MissionSupervisorRunReport {
   stopReason: MissionSupervisorStopReason;
   recoveredMissionIds: string[];
+  stoppedMissionIds: string[];
   noProgressCycles: number;
   cycles: MissionSupervisorCycleRecord[];
   remainingMissionIds: string[];
@@ -128,12 +132,86 @@ export class MissionSupervisor {
     return this.leaseCoordinator.recoverStaleMissions(now);
   }
 
+  reconcileStopRequestedMissions(ownerId: string, now = this.now()): Mission[] {
+    const stopped: Mission[] = [];
+    for (const mission of this.repository.listMissions()) {
+      if (!mission.stopRequest) {
+        continue;
+      }
+      if (!canSupervisorMaterializeStop(mission, now)) {
+        continue;
+      }
+      const reason = resolveMissionStopReason(mission);
+      let attempt = mission.activeAttemptId
+        ? this.repository.getAttemptById(mission.activeAttemptId)
+        : findLatestStoppableAttempt(this.repository, mission.id);
+      if (attempt && !isTerminalAttemptStatus(attempt.status)) {
+        attempt = this.repository.saveAttempt({
+          ...attempt,
+          status: 'stopped',
+          error: reason,
+          endedAt: attempt.endedAt ?? now,
+          updatedAt: now,
+        });
+        this.repository.appendEvent({
+          id: `mission-stop:${mission.id}:attempt:${now}`,
+          missionId: mission.id,
+          attemptId: attempt.id,
+          generationId: attempt.generationId ?? mission.activeGenerationId,
+          generationIndex: attempt.generationIndex ?? mission.activeGenerationIndex,
+          kind: 'attempt.stopped',
+          summary: reason,
+          detail: null,
+          metadata: {
+            stopRequestId: mission.stopRequest.requestId,
+            actorId: mission.stopRequest.actorId,
+            actorType: mission.stopRequest.actorType,
+            supervisor: true,
+          },
+          createdAt: now,
+        });
+      }
+      let stoppedMission = materializeMissionStop(mission, {
+        at: now,
+        reason,
+        lastError: reason,
+        activeAttemptId: attempt?.id ?? mission.activeAttemptId,
+      });
+      this.repository.saveMission(stoppedMission);
+      this.repository.appendEvent({
+        id: `mission-stop:${mission.id}:mission:${now}`,
+        missionId: mission.id,
+        attemptId: attempt?.id ?? null,
+        generationId: mission.activeGenerationId,
+        generationIndex: mission.activeGenerationIndex,
+        kind: 'mission.stopped',
+        summary: reason,
+        detail: null,
+        metadata: {
+          stopRequestId: mission.stopRequest.requestId,
+          actorId: mission.stopRequest.actorId,
+          actorType: mission.stopRequest.actorType,
+          ownerId,
+          supervisor: true,
+        },
+        createdAt: now,
+      });
+      stoppedMission = this.leaseCoordinator.releaseMission(stoppedMission.id, {
+        ownerId,
+        reason,
+      });
+      stopped.push(stoppedMission);
+    }
+    return stopped;
+  }
+
   async runUntilIdle(
     options: MissionSupervisorRunOptions,
   ): Promise<MissionSupervisorRunReport> {
     const report: MissionSupervisorRunReport = {
       stopReason: 'idle',
       recoveredMissionIds: [],
+      stoppedMissionIds: [],
       noProgressCycles: 0,
       cycles: [],
       remainingMissionIds: [],
@@ -141,6 +219,7 @@ export class MissionSupervisor {
     if (options.recoverStaleBeforeRun !== false) {
       this.appendRecoveredMissionIds(report, this.recoverStaleMissions());
     }
+    this.appendStoppedMissionIds(report, this.reconcileStopRequestedMissions(options.ownerId));
 
     const maxCycles = normalizePositiveInteger(options.maxCycles) ?? Number.POSITIVE_INFINITY;
     const maxNoProgressCycles = normalizePositiveInteger(options.maxNoProgressCycles) ?? Number.POSITIVE_INFINITY;
@@ -179,6 +258,7 @@ export class MissionSupervisor {
       if (options.recoverStaleBeforeRun !== false) {
         this.appendRecoveredMissionIds(report, this.recoverStaleMissions());
       }
+      this.appendStoppedMissionIds(report, this.reconcileStopRequestedMissions(options.ownerId));
     }
 
     if (report.stopReason !== 'max_no_progress_cycles_reached') {
@@ -198,6 +278,17 @@ export class MissionSupervisor {
     for (const mission of missions) {
       if (!report.recoveredMissionIds.includes(mission.id)) {
         report.recoveredMissionIds.push(mission.id);
+      }
+    }
+  }
+
+  private appendStoppedMissionIds(
+    report: MissionSupervisorRunReport,
+    missions: readonly Mission[],
+  ): void {
+    for (const mission of missions) {
+      if (!report.stoppedMissionIds.includes(mission.id)) {
+        report.stoppedMissionIds.push(mission.id);
       }
     }
   }
@@ -224,6 +315,7 @@ export function createMissionSupervisionSnapshot(
     status: mission.status,
     resumable: isMissionResumable(mission, now),
     supervisable: isMissionSupervisable(repository, mission, now),
+    stopRequest: cloneStopRequest(mission.stopRequest),
     activeGenerationId: mission.activeGenerationId,
     activeGenerationIndex: mission.activeGenerationIndex,
     activeAttemptId: mission.activeAttemptId,
@@ -250,6 +342,9 @@ export function isMissionSupervisable(
   mission: Mission,
   now = Date.now(),
 ): boolean {
+  if (mission.stopRequest) {
+    return false;
+  }
   if (!SUPERVISABLE_MISSION_STATUS_SET.has(mission.status)) {
     return false;
   }
@@ -309,6 +404,74 @@ function getLatestMissionEvent(events: readonly MissionEvent[]): MissionEvent | 
     }
   }
   return latest;
+}
+
+function cloneStopRequest(value: MissionStopRequest | null): MissionStopRequest | null {
+  if (!value) {
+    return null;
+  }
+  return {
+    ...value,
+  };
+}
+
+function canSupervisorMaterializeStop(mission: Mission, now: number): boolean {
+  if (!mission.stopRequest) {
+    return false;
+  }
+  if (
+    mission.status === 'draft'
+    || mission.status === 'queued'
+    || mission.status === 'waiting_user'
+    || mission.status === 'needs_human'
+    || mission.status === 'handoff'
+    || mission.status === 'blocked'
+  ) {
+    return true;
+  }
+  if (
+    mission.status !== 'planning'
+    && mission.status !== 'running'
+    && mission.status !== 'verifying'
+    && mission.status !== 'repairing'
+  ) {
+    return false;
+  }
+  return mission.lease === null
+    || mission.lease.releasedAt !== null
+    || mission.lease.expiresAt <= now;
+}
+
+function isTerminalAttemptStatus(status: MissionAttempt['status']): boolean {
+  return (
+    status === 'completed'
+    || status === 'failed'
+    || status === 'stopped'
+    || status === 'waiting_user'
+    || status === 'needs_human'
+    || status === 'handoff'
+    || status === 'blocked'
+  );
+}
+
+function findLatestStoppableAttempt(
+  repository: MissionRepository,
+  missionId: string,
+): MissionAttempt | null {
+  const attempts = repository.listAttempts(missionId)
+    .filter((attempt) => !isTerminalAttemptStatus(attempt.status))
+    .sort((left, right) => {
+      const leftGeneration = left.generationIndex ?? 0;
+      const rightGeneration = right.generationIndex ?? 0;
+      if (leftGeneration !== rightGeneration) {
+        return rightGeneration - leftGeneration;
+      }
+      if (left.index !== right.index) {
+        return right.index - left.index;
+      }
+      return right.updatedAt - left.updatedAt;
+    });
+  return attempts[0] ?? null;
 }
 
 function normalizePositiveInteger(value: number | null | undefined): number | null {

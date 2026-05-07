@@ -1821,6 +1821,10 @@ Current implementation note:
   leases, rebuild status snapshots from repository truth, and sequentially
   dispatch supervisable missions (`queued`, `planning`, `running`,
   `verifying`, `repairing`) until idle
+- mission stop control now persists an explicit `stopRequest` on the
+  authoritative mission record; runtime and supervision consume that request at
+  safe checkpoints instead of treating host-side process interruption as the
+  lifecycle source of truth
 - `waiting_user`, `needs_human`, `handoff`, and similar paused states remain
   first-class runtime states, but they are not auto-resumed by supervision
   without an explicit host control action such as resume/retry

@@ -3,16 +3,21 @@ import {
   createMissionRetryAggregate,
   mapMissionStatusToGenerationStatus,
 } from './domain_records.js';
-import { createMissionResumeSnapshot } from './control_actions.js';
+import {
+  createMissionResumeSnapshot,
+  createMissionStopRequest,
+  materializeMissionStop,
+  shouldMissionStopImmediately,
+} from './control_actions.js';
 import { getLatestMissionCycleResult } from './cycle_result.js';
 import { createMissionAggregateFromSourceSummary } from './source_mission.js';
 import type { MissionRepository } from './repository.js';
-import { transitionMission } from './state_machine.js';
 import type {
   Mission,
   MissionAttempt,
   MissionEvent,
   MissionPendingApproval,
+  MissionStopRequest,
 } from './types.js';
 import type {
   CreateMissionCommandInput,
@@ -267,14 +272,36 @@ export class DirectMissionControlApi implements MissionControlApi {
     const at = this.now();
     const reason = normalizeText(request.input.reason) ?? 'Mission stopped.';
     if (
-      mission.status === 'completed'
+      mission.status === 'stopped'
+      || mission.status === 'completed'
       || mission.status === 'failed'
       || mission.status === 'archived'
     ) {
       return withMeta(request.meta, this.buildMissionDetailView(mission));
     }
-    let activeAttempt = mission.activeAttemptId
-      ? this.repository.getAttemptById(mission.activeAttemptId)
+    const stopRequested = createMissionStopRequest(mission, {
+      at,
+      requestId: request.meta.requestId,
+      actorId: request.input.actor?.actorId ?? null,
+      actorType: request.input.actor?.actorType ?? null,
+      reason,
+    });
+    this.repository.saveMission(stopRequested);
+    this.repository.appendEvent(this.createMissionEvent({
+      mission: stopRequested,
+      attemptId: stopRequested.activeAttemptId,
+      kind: 'mission.stop_requested',
+      summary: reason,
+      metadata: {
+        requestId: request.meta.requestId,
+        ...buildActorMetadata(request.input.actor),
+      },
+    }));
+    if (!shouldMissionStopImmediately(stopRequested)) {
+      return withMeta(request.meta, this.buildMissionDetailView(stopRequested));
+    }
+    let activeAttempt = stopRequested.activeAttemptId
+      ? this.repository.getAttemptById(stopRequested.activeAttemptId)
       : null;
     if (activeAttempt && !isTerminalAttemptStatus(activeAttempt.status)) {
       activeAttempt = {
@@ -286,31 +313,32 @@ export class DirectMissionControlApi implements MissionControlApi {
       };
       this.repository.saveAttempt(activeAttempt);
       this.repository.appendEvent(this.createMissionEvent({
-        mission,
+        mission: stopRequested,
         attemptId: activeAttempt.id,
         kind: 'attempt.stopped',
         summary: reason,
-        metadata: buildActorMetadata(request.input.actor),
+        metadata: {
+          requestId: request.meta.requestId,
+          ...buildActorMetadata(request.input.actor),
+        },
       }));
     }
-    const stopped = mission.status === 'stopped'
-      ? {
-        ...mission,
-        updatedAt: at,
-      }
-      : transitionMission(mission, 'stopped', {
-        at,
-        reason,
-        lastError: normalizeText(mission.lastError) ?? reason,
-        activeAttemptId: mission.activeAttemptId,
-      });
+    const stopped = materializeMissionStop(stopRequested, {
+      at,
+      reason,
+      lastError: normalizeText(stopRequested.lastError) ?? reason,
+      activeAttemptId: activeAttempt?.id ?? stopRequested.activeAttemptId,
+    });
     this.repository.saveMission(stopped);
     this.repository.appendEvent(this.createMissionEvent({
       mission: stopped,
       attemptId: activeAttempt?.id ?? null,
       kind: 'mission.stopped',
       summary: reason,
-      metadata: buildActorMetadata(request.input.actor),
+      metadata: {
+        requestId: request.meta.requestId,
+        ...buildActorMetadata(request.input.actor),
+      },
     }));
     return withMeta(request.meta, this.buildMissionDetailView(stopped));
   }
@@ -372,6 +400,7 @@ export class DirectMissionControlApi implements MissionControlApi {
     const events = this.repository.listEvents(mission.id);
     return {
       missionId: mission.id,
+      stopRequest: cloneStopRequest(mission.stopRequest),
       pendingApproval: clonePendingApproval(mission.pendingApproval),
       latestCycleResult: getLatestMissionCycleResult(events),
       hostBindings: buildMissionHostBindings(mission),
@@ -518,6 +547,15 @@ function clonePendingApproval(value: MissionPendingApproval | null): MissionPend
   return {
     ...value,
     options: value.options.map((option) => ({ ...option })),
+  };
+}
+
+function cloneStopRequest(value: MissionStopRequest | null): MissionStopRequest | null {
+  if (!value) {
+    return null;
+  }
+  return {
+    ...value,
   };
 }
 
