@@ -317,11 +317,27 @@ test('adapter server exposes model metadata from package boundary', async () => 
         },
         parallelToolCalls: false,
         maxOutputTokens: 4096,
+        retry: {
+          maxAttempts: 4,
+          retryStatuses: [408, 429, 503],
+          baseDelayMs: 500,
+          maxDelayMs: 4_000,
+          retryAfterMaxMs: 45_000,
+          retryNetworkErrors: true,
+        },
       },
     }],
     providerCapabilities: {
       supportsBuiltinWebSearchTool: false,
       supportsResponsesCompact: false,
+      retry: {
+        maxAttempts: 2,
+        retryStatuses: [429, 500],
+        baseDelayMs: 250,
+        maxDelayMs: 2_000,
+        retryAfterMaxMs: 20_000,
+        retryNetworkErrors: false,
+      },
       multimodal: {
         supportsImageInput: true,
         supportsFileInput: false,
@@ -343,6 +359,15 @@ test('adapter server exposes model metadata from package boundary', async () => 
       },
       defaults: {
         model: 'example-model',
+      },
+      retry: {
+        enabled: true,
+        maxAttempts: 2,
+        retryStatuses: [429, 500],
+        baseDelayMs: 250,
+        maxDelayMs: 2000,
+        retryAfterMaxMs: 20000,
+        retryNetworkErrors: false,
       },
       routes: {
         primary: {
@@ -389,6 +414,14 @@ test('adapter server exposes model metadata from package boundary', async () => 
       },
       parallelToolCalls: false,
       maxOutputTokens: 4096,
+      retry: {
+        maxAttempts: 4,
+        retryStatuses: [408, 429, 503],
+        baseDelayMs: 500,
+        maxDelayMs: 4000,
+        retryAfterMaxMs: 45000,
+        retryNetworkErrors: true,
+      },
     });
     assert.deepEqual(body.data[0].capabilityCatalog, {
       toolCalling: {
@@ -449,6 +482,15 @@ test('adapter server exposes model metadata from package boundary', async () => 
           strippedFields: ['reasoning_effort', 'thinking'],
         },
       },
+      retry: {
+        enabled: true,
+        maxAttempts: 4,
+        retryStatuses: [408, 429, 503],
+        baseDelayMs: 500,
+        maxDelayMs: 4000,
+        retryAfterMaxMs: 45000,
+        retryNetworkErrors: true,
+      },
       structuredOutput: {
         jsonSchema: true,
       },
@@ -463,6 +505,98 @@ test('adapter server exposes model metadata from package boundary', async () => 
         maxOutputTokens: 4096,
       },
     });
+  } finally {
+    await server.stop();
+  }
+});
+
+test('adapter server applies model-specific retry overrides during upstream retries', async () => {
+  const fetchCalls = new Map<string, number>();
+  const server = new OpenAICompatibleResponsesAdapterServer({
+    apiKey: 'test-key',
+    providerCapabilities: {
+      retry: {
+        maxAttempts: 2,
+        retryStatuses: [429],
+        baseDelayMs: 0,
+        maxDelayMs: 0,
+        retryAfterMaxMs: 0,
+        retryNetworkErrors: false,
+      },
+      modelCapabilities: {
+        'strict-model': {
+          retry: {
+            maxAttempts: 1,
+          },
+        },
+      },
+      usage: {
+        estimateWhenMissing: true,
+      },
+    },
+    fetchImpl: (async (_url, init) => {
+      const requestBody = JSON.parse(String(init?.body ?? '{}'));
+      const model = String(requestBody?.model ?? 'unknown');
+      const attempt = (fetchCalls.get(model) ?? 0) + 1;
+      fetchCalls.set(model, attempt);
+      if (attempt === 1) {
+        return new Response(JSON.stringify({
+          error: {
+            message: `retry me once for ${model}`,
+            type: 'rate_limit_error',
+          },
+        }), {
+          status: 429,
+          headers: {
+            'Content-Type': 'application/json',
+          },
+        });
+      }
+      return new Response(JSON.stringify({
+        id: `chatcmpl_${model}_${attempt}`,
+        created: 1_700_000_300,
+        model,
+        choices: [{
+          message: {
+            content: `recovered for ${model}`,
+          },
+        }],
+      }), {
+        status: 200,
+        headers: {
+          'Content-Type': 'application/json',
+        },
+      });
+    }) as typeof fetch,
+  });
+
+  await server.start();
+  try {
+    const strictResponse = await fetch(`${server.baseUrl}/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'strict-model',
+        input: 'do not retry this model',
+      }),
+    });
+    const strictBody = await strictResponse.json() as any;
+    assert.equal(strictResponse.status, 429);
+    assert.equal(fetchCalls.get('strict-model'), 1);
+    assert.equal(strictBody.error.category, 'rate_limit');
+
+    const retryResponse = await fetch(`${server.baseUrl}/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        model: 'retry-model',
+        input: 'retry this model once',
+      }),
+    });
+    const retryBody = await retryResponse.json() as any;
+    assert.equal(retryResponse.status, 200);
+    assert.equal(fetchCalls.get('retry-model'), 2);
+    assert.equal(retryBody.output[0].content[0].text, 'recovered for retry-model');
   } finally {
     await server.stop();
   }

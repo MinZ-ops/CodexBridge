@@ -90,6 +90,7 @@ Latest progress:
 - [x] Package `/v1/models` output now includes a normalized `protocol` view that merges provider defaults with model overrides for tools, multimodal input, reasoning, compact support, structured output, and output-token limits
 - [x] Package model catalogs and `/v1/models` output now include a normalized `capabilityCatalog` summary for tool calling, file/PDF input, reasoning, compact support, and provider/model-specific quirks
 - [x] Package `/v1/models` output now also exposes top-level adapter `meta` plus per-model routing and reasoning-transport metadata, so upstream model alias rewrites and provider-specific thinking toggles are visible without replaying a live request
+- [x] Model-level retry overrides now apply to live upstream retry decisions, and `/v1/models` exposes normalized retry metadata at both top-level adapter `meta` and per-model `protocol` views
 - [x] Package trace mode now emits machine-readable `request.adjusted` events for filtered fields, dropped tools, capped output-token requests, and unsupported image/file input downgrades
 - [x] Package-local trace mode now exposes optional request/response/retry/stream trace hooks, and the internal standalone launcher can emit those trace events as NDJSON to stderr
 - [x] Upstream error normalization now exposes stable categories and retry hints for authentication, rate-limit, transient, unsupported-feature, invalid-request, and malformed-upstream cases
@@ -267,6 +268,11 @@ not bridge-side WeChat product work.
   reasoning-transport details so provider/model alias rewrites and thinking
   toggles can be inspected directly from `/models` instead of inferred from
   payload rules or live trace output.
+- [x] Expose normalized retry policy metadata and honor model-level retry overrides
+  The package now applies model-specific `retry` capability overrides during
+  live upstream retries and exposes the effective retry profile through
+  `/v1/models` top-level `meta.retry` plus per-model `protocol.retry`
+  metadata for easier debugging and regression checks.
 - [x] Add a package-local debug or trace mode for adapter transforms
   The package now exposes optional request/response/retry/stream trace hooks,
   including machine-readable `request.adjusted` events for downgrade/filter

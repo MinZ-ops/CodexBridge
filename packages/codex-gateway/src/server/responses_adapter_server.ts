@@ -315,6 +315,10 @@ export class OpenAICompatibleResponsesAdapterServer {
   ): Promise<void> {
     const route: AdapterRoute = compact ? 'responses.compact' : 'responses';
     const requestedModel = normalizeString(requestBody?.model) || this.defaultModel;
+    const effectiveCapabilities = resolveOpenAICompatibleProviderCapabilitiesForModel(
+      this.providerCapabilities,
+      requestedModel,
+    );
     const stream = Boolean(requestBody?.stream);
     this.emitTrace({
       type: 'request.received',
@@ -324,14 +328,14 @@ export class OpenAICompatibleResponsesAdapterServer {
       request: requestBody,
     });
     if (compact) {
-      await this.handleCompactResponses(requestBody, response);
+      await this.handleCompactResponses(requestBody, response, effectiveCapabilities);
       return;
     }
     const chatBody = responsesRequestToChatCompletions(requestBody, {
       model: requestedModel,
       stream,
       providerKind: this.providerKind,
-      providerCapabilities: this.providerCapabilities,
+      providerCapabilities: effectiveCapabilities,
     });
     this.emitTrace({
       type: 'request.translated',
@@ -344,7 +348,7 @@ export class OpenAICompatibleResponsesAdapterServer {
     const adjustments = summarizeRequestAdjustments({
       request: requestBody,
       upstreamRequest: chatBody,
-      providerCapabilities: this.providerCapabilities,
+      providerCapabilities: effectiveCapabilities,
     });
     if (adjustments.length > 0) {
       this.emitTrace({
@@ -373,6 +377,7 @@ export class OpenAICompatibleResponsesAdapterServer {
         body: JSON.stringify(chatBody),
       },
       'responses',
+      effectiveCapabilities,
     );
     if (!upstream.response.ok) {
       const error = normalizeUpstreamError(
@@ -391,7 +396,7 @@ export class OpenAICompatibleResponsesAdapterServer {
       return;
     }
     if (stream) {
-      await this.writeStreamingResponse(requestBody, upstream.response, response);
+      await this.writeStreamingResponse(requestBody, effectiveCapabilities, upstream.response, response);
       return;
     }
     const json = await upstream.response.json() as JsonRecord;
@@ -416,7 +421,7 @@ export class OpenAICompatibleResponsesAdapterServer {
       );
       const adaptedResponse = chatCompletionsResponseToResponses(json, {
         request: requestBody,
-        providerCapabilities: this.providerCapabilities,
+        providerCapabilities: effectiveCapabilities,
         modelMetadata,
       });
       this.emitTrace({
@@ -442,7 +447,11 @@ export class OpenAICompatibleResponsesAdapterServer {
     }
   }
 
-  private async handleCompactResponses(requestBody: JsonRecord, response: ServerResponse): Promise<void> {
+  private async handleCompactResponses(
+    requestBody: JsonRecord,
+    response: ServerResponse,
+    providerCapabilities: OpenAICompatibleProviderCapabilities | null,
+  ): Promise<void> {
     if (Boolean(requestBody?.stream)) {
       writeJson(response, 400, {
         error: {
@@ -455,14 +464,14 @@ export class OpenAICompatibleResponsesAdapterServer {
     const compactBody = { ...requestBody };
     delete compactBody.stream;
 
-    if (!this.providerCapabilities?.supportsResponsesCompact) {
+    if (!providerCapabilities?.supportsResponsesCompact) {
       const modelMetadata = resolveModelMetadata(
         this.models,
         normalizeString(compactBody?.model) || this.defaultModel,
       );
       const compactResponse = responsesRequestToCompactionResponse(compactBody, {
         request: compactBody,
-        providerCapabilities: this.providerCapabilities,
+        providerCapabilities,
         modelMetadata,
       });
       this.emitTrace({
@@ -476,7 +485,7 @@ export class OpenAICompatibleResponsesAdapterServer {
       return;
     }
 
-    const compactPath = normalizePath(this.providerCapabilities.upstreamResponsesCompactPath) || '/responses/compact';
+    const compactPath = normalizePath(providerCapabilities.upstreamResponsesCompactPath) || '/responses/compact';
     const upstream = await this.fetchUpstreamWithRetry(
       buildChatCompletionsUrl(this.upstreamBaseUrl, compactPath),
       {
@@ -489,6 +498,7 @@ export class OpenAICompatibleResponsesAdapterServer {
         body: JSON.stringify(compactBody),
       },
       'responses.compact',
+      providerCapabilities,
     );
     if (!upstream.response.ok) {
       const error = normalizeUpstreamError(
@@ -517,11 +527,12 @@ export class OpenAICompatibleResponsesAdapterServer {
     url: string,
     init: RequestInit,
     route: AdapterRoute,
+    providerCapabilities: OpenAICompatibleProviderCapabilities | null,
   ): Promise<{
     response: Response;
     errorText: string | null;
   }> {
-    const retry = normalizeRetryCapabilities(this.providerCapabilities?.retry);
+    const retry = normalizeRetryCapabilities(providerCapabilities?.retry);
     let lastError: unknown = null;
     for (let attempt = 1; attempt <= retry.maxAttempts; attempt += 1) {
       let upstream: Response;
@@ -569,6 +580,7 @@ export class OpenAICompatibleResponsesAdapterServer {
 
   private async writeStreamingResponse(
     requestBody: JsonRecord,
+    providerCapabilities: OpenAICompatibleProviderCapabilities | null,
     upstream: Response,
     response: ServerResponse,
   ): Promise<void> {
@@ -591,7 +603,7 @@ export class OpenAICompatibleResponsesAdapterServer {
       readSseDataLines(upstream.body),
       {
         request: requestBody,
-        providerCapabilities: this.providerCapabilities,
+        providerCapabilities,
         modelMetadata: resolveModelMetadata(
           this.models,
           normalizeString(requestBody?.model) || this.defaultModel,
@@ -861,6 +873,7 @@ function buildProtocolMetadataForModel({
         strippedFields: [...thinkingPolicy.stripFields],
       },
     },
+    retry: buildNormalizedRetryMetadata(effectiveCapabilities?.retry),
     structuredOutput: {
       jsonSchema: typeof modelCapabilities?.jsonSchema === 'boolean'
         ? modelCapabilities.jsonSchema
@@ -903,6 +916,7 @@ function buildModelsResponseMetadata({
     defaults: {
       model: defaultModel,
     },
+    retry: buildNormalizedRetryMetadata(providerCapabilities?.retry),
     routes: {
       primary: {
         models: '/models',
@@ -1283,6 +1297,22 @@ function normalizeRetryCapabilities(capabilities: OpenAICompatibleRetryCapabilit
     maxDelayMs: clampInteger(capabilities.maxDelayMs, 0, 60_000, 2_000),
     retryAfterMaxMs: clampInteger(capabilities.retryAfterMaxMs, 0, 300_000, 30_000),
     retryNetworkErrors: Boolean(capabilities.retryNetworkErrors),
+  };
+}
+
+function buildNormalizedRetryMetadata(
+  capabilities: OpenAICompatibleRetryCapabilities | null | undefined,
+): JsonRecord {
+  const normalized = normalizeRetryCapabilities(capabilities);
+  const enabled = normalized.maxAttempts > 1;
+  return {
+    enabled,
+    maxAttempts: normalized.maxAttempts,
+    retryStatuses: enabled ? [...normalized.retryStatuses].sort((left, right) => left - right) : [],
+    baseDelayMs: enabled ? normalized.baseDelayMs : 0,
+    maxDelayMs: enabled ? normalized.maxDelayMs : 0,
+    retryAfterMaxMs: enabled ? normalized.retryAfterMaxMs : 0,
+    retryNetworkErrors: enabled ? normalized.retryNetworkErrors : false,
   };
 }
 
