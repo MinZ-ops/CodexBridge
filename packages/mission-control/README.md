@@ -29,7 +29,7 @@ It must not own bridge behavior:
 - SendGate or platform rate limits
 - bridge sessions or thread browsing UX
 - approvals as chat wording or UI policy
-- assistant records, automations, uploads, or artifact delivery policy
+- assistant records, uploads, or artifact delivery policy
 - provider-native in-turn approval replies before a provider-neutral approval
   control port exists
 
@@ -43,8 +43,8 @@ Current phase:
   primitives, package-owned retry/resume snapshot helpers, and a
   repository-backed bounded mission runtime that drives continuation,
   repair/retry, verifier authority, and stop/interrupt control, with
-  CodexBridge `/agent` and scheduled `/auto` runs delegating into the same
-  Mission Control runtime without introducing a separate `/mission` surface
+  CodexBridge `/agent` delegating into the Mission Control runtime without
+  introducing a separate `/mission` surface
 
 This package should preserve the Symphony-style separation between:
 

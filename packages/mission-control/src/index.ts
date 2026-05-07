@@ -25,7 +25,6 @@ export const MISSION_CONTROL_DOES_NOT_OWN = [
   'thread-browsing',
   'provider-profile-cli-management',
   'assistant-records',
-  'automations',
   'uploads',
   'artifact-delivery-policy',
 ] as const;

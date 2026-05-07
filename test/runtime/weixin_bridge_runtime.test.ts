@@ -634,7 +634,7 @@ test('WeixinBridgeRuntime runs due automation jobs against the same WeChat scope
     locale: 'zh-CN',
     prompt: '检查部署是否完成',
   };
-  const seenJobs: any[] = [];
+  const seenTexts: string[] = [];
   const runtime = makeRuntime({
     automationJobs: {
       claimDueJobs() {
@@ -670,8 +670,8 @@ test('WeixinBridgeRuntime runs due automation jobs against the same WeChat scope
       async reconcileActiveTurn() {
         return null;
       },
-      async runAutomationJob(liveJob: any) {
-        seenJobs.push(liveJob);
+      async handleInboundEvent(event: any) {
+        seenTexts.push(event.text);
         return {
           ...completeResponse('自动化执行完成。'),
           session: {
@@ -681,9 +681,6 @@ test('WeixinBridgeRuntime runs due automation jobs against the same WeChat scope
           },
         };
       },
-      async handleInboundEvent() {
-        throw new Error('handleInboundEvent should not run when automation Mission Control is available');
-      },
     },
   });
 
@@ -691,9 +688,7 @@ test('WeixinBridgeRuntime runs due automation jobs against the same WeChat scope
   await runtime.waitForIdle();
 
   assert.equal(deferredCalls.length, 0);
-  assert.equal(seenJobs.length, 1);
-  assert.equal(seenJobs[0]?.bridgeSessionId, 'session-auto-1');
-  assert.equal(seenJobs[0]?.id, 'auto-1');
+  assert.deepEqual(seenTexts, ['检查部署是否完成']);
   assert.deepEqual(sent, [
     { externalScopeId: 'wxid_1', content: '自动化执行完成。' },
   ]);

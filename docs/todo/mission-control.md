@@ -172,8 +172,6 @@ Before moving ownership into the package:
   - list / show / stop / retry / result
   - approval + interrupted-turn handling
   - artifact/result delivery
-- [x] Record the current `/auto` behavior that should later delegate into mission runs
-
 Phase 0 source-of-truth inventory:
 
 - `/agent`
@@ -184,18 +182,6 @@ Phase 0 source-of-truth inventory:
     - `/agent show, retry, rename, stop, and delete manage queued jobs`
     - `/agent runAgentJob retries after an interrupted provider turn and completes on the next attempt`
     - `/agent runAgentJob forwards provider approval requests to the supplied approval callback`
-- `/auto`
-  - public command contract: `docs/command-skills/auto.md`
-  - migration-protection tests: `test/core/bridge_coordinator.test.ts`
-    - `/auto add creates a draft first and /auto confirm persists the standalone automation job`
-    - `/auto add natural language produces a draft through provider normalization before /auto confirm`
-    - `/auto edit updates the pending automation draft instead of replacing it`
-    - `/auto rename and /auto del update and remove automation jobs`
-    - `/auto pause and /auto resume update automation job status`
-    - `/auto show without args opens the only automation job and shows a future next-run time`
-    - `/auto show without args asks for an index when multiple automation jobs exist`
-    - `/auto add thread requires an existing bound session`
-    - `/auto cancel clears the pending automation draft`
 
 ## Phase 1: Domain and Persistence
 
@@ -373,8 +359,6 @@ Phase 5 source-of-truth tests:
 ## Phase 6: CodexBridge Integration
 
 - [x] Make `/agent` call Mission Control instead of owning the runner directly
-- [x] Make `/auto` schedule Mission Control runs instead of separate background
-  job logic
 - [x] Reuse the same mission state for:
   - list
   - show
@@ -394,16 +378,6 @@ Control through a bridge-side adapter that:
 - preserves Mission Control verifier authority and continuation-after-normal-exit
   behavior on the real `/agent` execution path without introducing a new
   `/mission` command yet
-
-Phase 6b landed: scheduled `/auto` sweeps now delegate execution into Mission
-Control through a bridge-side adapter that:
-
-- persists mission/attempt/event snapshot state on the `AutomationJob`
-  compatibility record
-- reuses existing CodexBridge turn recovery, auto-rebind, approval, and WeChat
-  SendGate delivery paths as the first host/control surface
-- persists rebound bridge-session identity back onto the compatibility record so
-  continuation turns stay on the live session instead of stale session ids
 
 Phase 6c landed: bridge-side `/agent` read/control commands now project a
 single Mission Control-backed state view so that:
@@ -448,22 +422,17 @@ Phase 6 source-of-truth tests:
   - `/agent runAgentJob continues the same attempt after a normal partial provider exit`
   - `/agent runAgentJob loads WORKFLOW.md and routes it into the mission-controlled execution prompt`
   - `/agent runAgentJob forwards provider approval requests to the supplied approval callback`
-  - `/auto scheduled runs delegate into Mission Control and persist automation mission state`
 - `test/core/agent_job_service.test.ts`
   - `AgentJobService retryJob preserves Mission Control runtime history when re-queueing waiting-human missions`
   - `AgentJobService retryJob still clears runtime history for fresh reruns`
-- `test/core/mission_control_automation_job_runner.test.ts`
-  - `automation mission runner persists rebound bridge sessions across continuation turns`
-- `test/runtime/weixin_bridge_runtime.test.ts`
-  - `WeixinBridgeRuntime runs due automation jobs against the same WeChat scope and records completion`
 
 Phase 6e landed: public package metadata and checklist status now track the
 verified CodexBridge integration state so that:
 
 - `@codexbridge/mission-control` publishes a `phase-6-codexbridge-integration`
   marker instead of the stale Phase 5 label
-- package README and public-surface tests reflect that `/agent` and scheduled
-  `/auto` already delegate into the same Mission Control runtime
+- package README and public-surface tests reflect that `/agent` delegates into
+  Mission Control without introducing a separate `/mission` surface
 - checklist items backed by Mission Control package tests, bridge integration
   tests, and the package boundary check are marked complete
 
@@ -492,10 +461,8 @@ that:
   - `pnpm mission-control:test`
   - `pnpm mission-control:build`
   - `pnpm mission-control:check-boundary`
-  - `pnpm test --test-name-pattern "Mission Control|WORKFLOW\\.md|interrupted provider turn|normal partial provider exit|approval requests|scheduled runs delegate" test/core/bridge_coordinator.test.ts`
+  - `pnpm test --test-name-pattern "Mission Control|WORKFLOW\\.md|interrupted provider turn|normal partial provider exit|approval requests" test/core/bridge_coordinator.test.ts`
   - `pnpm test --test-name-pattern "AgentJobService retryJob preserves Mission Control runtime history when re-queueing waiting-human missions|AgentJobService retryJob still clears runtime history for fresh reruns" test/core/agent_job_service.test.ts`
-  - `pnpm test --test-name-pattern "automation mission runner persists rebound bridge sessions across continuation turns" test/core/mission_control_automation_job_runner.test.ts`
-  - `pnpm test --test-name-pattern "WeixinBridgeRuntime runs due automation jobs against the same WeChat scope and records completion" test/runtime/weixin_bridge_runtime.test.ts`
 
 ## Phase 7: Optional Web Surface
 
@@ -536,7 +503,7 @@ Mission Control is ready for broader extraction when:
 - [x] A user can give one goal and the system keeps working until it completes,
   blocks, fails, or is stopped
 - [x] Restart recovery works for queued/running/verifying missions
-- [x] `/agent` and `/auto` both use the same mission runtime
+- [x] `/agent` uses the mission runtime without host-owned runner logic
 - [x] The package has no imports from platform/runtime/i18n command code
 - [ ] A later Telegram, web, or other host surface can integrate without changing mission
   core behavior

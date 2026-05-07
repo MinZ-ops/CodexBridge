@@ -17,7 +17,6 @@ export type MissionStatus =
 export type MissionSource =
   | 'weixin'
   | 'telegram'
-  | 'automation'
   | 'assistant-record'
   | 'github'
   | 'linear'

@@ -1426,38 +1426,6 @@ export class WeixinBridgeRuntime {
     }
   }
 
-  async processAutomationJobEvent(event: InboundTextEvent, job: any): Promise<RuntimeResponse> {
-    await this.flushPendingScopeNotice(event.externalScopeId);
-    const streamState = createStreamState();
-    try {
-      const response = await this.bridgeCoordinator.runAutomationJob?.(job, {
-        onApprovalRequest: async () => {
-          await this.notifyApprovalPrompt(event);
-        },
-      }) ?? {
-        type: 'message',
-        messages: [],
-      };
-      if (response?.type !== 'message') {
-        return response;
-      }
-      const codexTurnMeta = response?.meta?.codexTurn ?? null;
-      const finalText = extractResponseMessageText(response);
-      const artifactMessages = extractResponseArtifactMessages(response);
-      if (normalizeComparableText(finalText) || codexTurnMeta) {
-        await this.ensureFinalDelivered(event, streamState, response, codexTurnMeta);
-      } else {
-        await this.stopPreviewStreaming(streamState);
-      }
-      if (artifactMessages.length > 0) {
-        await this.deliverArtifactMessages(event, artifactMessages);
-      }
-      return response;
-    } finally {
-      await this.stopPreviewStreaming(streamState);
-    }
-  }
-
   async runAutomationJob(job: any): Promise<RuntimeResponse> {
     const scopeId = String(job?.externalScopeId ?? '');
     if (!scopeId || await this.isScopeBusyForAutomation(job)) {
@@ -1484,16 +1452,11 @@ export class WeixinBridgeRuntime {
     };
 
     try {
-      const response = await this.enqueueScopeWork(scopeId, async () => {
-        if (typeof this.bridgeCoordinator?.runAutomationJob === 'function') {
-          return this.processAutomationJobEvent(event, job);
-        }
-        return this.processInboundEventWithOptions(event, {
-          deferPostResponseAction: false,
-          suppressProgressDelivery: true,
-          suppressTyping: true,
-        });
-      });
+      const response = await this.enqueueScopeWork(scopeId, async () => this.processInboundEventWithOptions(event, {
+        deferPostResponseAction: false,
+        suppressProgressDelivery: true,
+        suppressTyping: true,
+      }));
       const responseSession = (response as { session?: { bridgeSessionId?: string | null } } | null)?.session ?? null;
       const reboundBridgeSessionId = typeof responseSession?.bridgeSessionId === 'string'
         ? responseSession.bridgeSessionId.trim()

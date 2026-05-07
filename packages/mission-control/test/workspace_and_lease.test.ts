@@ -57,7 +57,7 @@ test('workspace service can reuse bound cwd for explicit read-only missions', ()
   });
   const mission = createMission({
     id: 'mission-workspace-2',
-    source: 'automation',
+    source: 'manual',
     platform: 'weixin',
     externalScopeId: 'wx-workspace-2',
     title: 'Read-only audit',
@@ -158,7 +158,7 @@ test('stale lease recovery re-queues running missions, preserves verifier states
   const runningMission = transitionMission(
     transitionMission(createMission({
       id: 'mission-stale-running',
-      source: 'automation',
+      source: 'manual',
       platform: 'weixin',
       externalScopeId: 'wx-stale-running',
       title: 'Running mission',
@@ -183,7 +183,7 @@ test('stale lease recovery re-queues running missions, preserves verifier states
   const verifyingMission = transitionMission(
     transitionMission(createMission({
       id: 'mission-stale-verifying',
-      source: 'automation',
+      source: 'manual',
       platform: 'weixin',
       externalScopeId: 'wx-stale-verifying',
       title: 'Verifying mission',

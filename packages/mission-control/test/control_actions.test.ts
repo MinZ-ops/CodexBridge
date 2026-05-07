@@ -173,7 +173,7 @@ test('json repository resetMission replaces the mission snapshot and clears atte
   const repo = new JsonFileMissionRepository(stateDir);
   const mission = transitionMission(createMission({
     id: 'mission-reset-1',
-    source: 'automation',
+    source: 'manual',
     platform: 'weixin',
     externalScopeId: 'wx-user-reset-1',
     title: 'Reset mission runtime state',

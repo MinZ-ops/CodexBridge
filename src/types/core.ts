@@ -170,13 +170,6 @@ export interface AutomationJob {
   lastDeliveredAt: number | null;
   lastResultPreview: string | null;
   lastError: string | null;
-  missionWorkflowPath?: string | null;
-  missionWorkflowSourceLabel?: string | null;
-  missionWorkpadLatestBlocker?: string | null;
-  missionWorkpadLatestVerifierSummary?: string | null;
-  missionWorkpadFinalResultSummary?: string | null;
-  missionAttemptHistory?: MissionAttemptHistoryEntry[];
-  missionRuntimeState?: MissionRuntimeStateSnapshot | null;
   createdAt: number;
   updatedAt: number;
 }

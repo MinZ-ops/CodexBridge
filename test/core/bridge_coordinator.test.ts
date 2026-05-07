@@ -10811,7 +10811,7 @@ test('/auto cancel clears the pending automation draft', async () => {
   assert.match(confirmed.messages[0]?.text ?? '', /当前没有待确认的自动化草案/);
 });
 
-test('/auto scheduled runs delegate into Mission Control and persist automation mission state', async () => {
+test('/auto scheduled runs stay on the one-shot automation path and do not persist Mission Control state', async () => {
   const { runtime, openai } = makeRuntime({
     defaultCwd: '/tmp/codexbridge-auto-mission-run',
   });
@@ -10848,17 +10848,11 @@ test('/auto scheduled runs delegate into Mission Control and persist automation 
   };
 
   const response = await runtime.services.bridgeCoordinator.runAutomationJob(job);
-  const liveJob = runtime.services.automationJobs.getById(job.id);
-  const mission = liveJob?.missionRuntimeState?.mission as Record<string, unknown> | null | undefined;
+  const liveJob = runtime.services.automationJobs.getById(job.id) as any;
 
   assert.match(response.messages[0]?.text ?? '', /部署状态正常，未发现异常/);
-  assert.equal(mission?.status, 'completed');
-  assert.equal(liveJob?.missionAttemptHistory?.length, 1);
-  assert.equal(liveJob?.missionAttemptHistory?.[0]?.status, 'completed');
-  assert.equal(
-    liveJob?.missionWorkpadLatestVerifierSummary,
-    'Scheduled automation produced a deliverable result.',
-  );
+  assert.equal('missionRuntimeState' in liveJob, false);
+  assert.equal('missionAttemptHistory' in liveJob, false);
 });
 
 test('ordinary messages after /stop do not eagerly resume the thread when startTurn succeeds', async () => {

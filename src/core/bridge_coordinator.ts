@@ -17,7 +17,6 @@ import {
   loadMissionWorkflowForAgentJob,
 } from './mission_control_agent_job_adapter.js';
 import { runAgentJobWithMissionControl } from './mission_control_agent_job_runner.js';
-import { runAutomationJobWithMissionControl } from './mission_control_automation_job_runner.js';
 import { computeNextRunAt as computeAutomationNextRunAt } from './automation_job_service.js';
 import {
   createPendingTurnArtifactDeliveryState,
@@ -10619,109 +10618,6 @@ export class BridgeCoordinator {
     ], buildSessionMeta(finalSession));
   }
 
-  async runAutomationJob(job: AutomationJob, options: StartTurnOptions = {}): Promise<CoordinatorResponse> {
-    if (!this.automationJobs) {
-      return messageResponse([
-        this.t('coordinator.auto.unsupported'),
-      ]);
-    }
-    const current = this.automationJobs.getById(job.id) ?? job;
-    const scopeRef = {
-      platform: current.platform,
-      externalScopeId: current.externalScopeId,
-    };
-    const session = this.automationJobs.getSession(current);
-    if (!session) {
-      const message = this.t('coordinator.auto.sessionMissing');
-      this.automationJobs.updateJob(current.id, {
-        lastError: message,
-        missionWorkpadLatestBlocker: message,
-        missionWorkpadLatestVerifierSummary: message,
-      });
-      return messageResponse([
-        message,
-      ], this.buildScopedSessionMeta({
-        platform: current.platform,
-        externalScopeId: current.externalScopeId,
-      }));
-    }
-    let missionRun;
-    try {
-      missionRun = await runAutomationJobWithMissionControl({
-        job: current,
-        automationJobs: this.automationJobs,
-        resolveSession: (liveJob) => this.automationJobs.getSession(liveJob),
-        startTurnWithRecovery: (nextScopeRef, nextSession, event, turnOptions) => {
-          this.activeTurns?.beginScopeTurn(nextScopeRef, {
-            bridgeSessionId: nextSession.id,
-            providerProfileId: nextSession.providerProfileId,
-            threadId: nextSession.codexThreadId,
-          });
-          return this.startTurnWithRecovery(nextScopeRef, nextSession, event, turnOptions)
-            .finally(() => this.releaseActiveTurnIfStillRunning(nextScopeRef));
-        },
-        stopSession: async (nextScopeRef, nextSession) => {
-          await this.stopThreadForSession(nextScopeRef, nextSession, { waitForSettleMs: 0 });
-        },
-        now: this.now,
-        onProgress: options.onProgress ?? null,
-        onApprovalRequest: options.onApprovalRequest ?? null,
-      });
-    } catch (error) {
-      const message = formatUserError(error);
-      this.automationJobs.updateJob(current.id, {
-        lastError: message,
-        missionWorkpadLatestBlocker: message,
-        missionWorkpadLatestVerifierSummary: message,
-      });
-      return messageResponse([
-        this.t('runtime.error.automationFailed', {
-          title: current.title,
-          error: message,
-        }),
-      ], buildSessionMeta(session));
-    }
-
-    const completed = missionRun.finalJob;
-    const finalSession = missionRun.finalSession ?? session;
-    const finalBridgeResult = missionRun.finalBridgeResult;
-    const verificationSummary = completed.missionWorkpadLatestVerifierSummary
-      ?? completed.lastError
-      ?? missionRun.runResult.mission.statusReason
-      ?? completed.lastResultPreview
-      ?? current.title;
-
-    if (missionRun.runResult.mission.status === 'completed') {
-      const resultText = finalBridgeResult?.outputText
-        ?? completed.lastResultPreview
-        ?? completed.missionWorkpadFinalResultSummary
-        ?? '';
-      const response = messageResponse([], buildSessionMeta(finalSession));
-      response.messages = [
-        ...(resultText ? [{ text: resultText }] : []),
-        ...mapMissionArtifactsToResponseMessages(missionRun.runResult.providerResult?.artifacts ?? []),
-      ];
-      response.meta = {
-        ...(response.meta ?? {}),
-        codexTurn: {
-          outputState: finalBridgeResult?.outputState ?? 'complete',
-          previewText: finalBridgeResult?.previewText ?? completed.lastResultPreview ?? resultText,
-          finalSource: finalBridgeResult?.finalSource ?? 'automation_job_mission_control',
-          errorMessage: finalBridgeResult?.errorMessage ?? '',
-        },
-      };
-      return response;
-    }
-
-    return messageResponse([
-      this.t('coordinator.auto.title', { value: completed.title }),
-      this.t('coordinator.agent.status', {
-        value: formatMissionRuntimeStatusLabel(missionRun.runResult.mission.status, this.currentI18n),
-      }),
-      this.t('coordinator.agent.verification', { value: verificationSummary }),
-    ], buildSessionMeta(finalSession));
-  }
-
   async verifyAgentJob(job: AgentJob, result, session): Promise<AgentVerificationResult> {
     const hardFailure = resolveAgentHardFailure(result);
     if (hardFailure) {
@@ -10746,6 +10642,43 @@ export class BridgeCoordinator {
       issues: [],
       nextAction: 'complete',
     };
+  }
+
+  async runAutomationJob(job: AutomationJob, options: StartTurnOptions = {}): Promise<CoordinatorResponse> {
+    if (!this.automationJobs) {
+      return messageResponse([
+        this.t('coordinator.auto.unsupported'),
+      ]);
+    }
+    const current = this.automationJobs.getById(job.id) ?? job;
+    const session = this.automationJobs.getSession(current);
+    if (!session) {
+      const message = this.t('coordinator.auto.sessionMissing');
+      this.automationJobs.updateJob(current.id, {
+        lastError: message,
+      });
+      return messageResponse([
+        message,
+      ], this.buildScopedSessionMeta({
+        platform: current.platform,
+        externalScopeId: current.externalScopeId,
+      }));
+    }
+
+    return this.handleInboundEvent({
+      platform: current.platform,
+      externalScopeId: current.externalScopeId,
+      text: String(current.prompt ?? '').trim(),
+      cwd: typeof current.cwd === 'string' ? current.cwd : null,
+      locale: typeof current.locale === 'string' ? current.locale : null,
+      metadata: {
+        codexbridge: {
+          overrideBridgeSessionId: current.bridgeSessionId,
+          automationJobId: current.id,
+          automationMode: current.mode,
+        },
+      },
+    }, options);
   }
 
   async verifyAgentResultWithCodex(job: AgentJob, result, session): Promise<AgentVerificationResult | null> {

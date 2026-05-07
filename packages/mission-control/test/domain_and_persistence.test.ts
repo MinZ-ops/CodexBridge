@@ -63,7 +63,7 @@ test('json repository can create, update, stop, and recover resumable missions a
   const repo = new JsonFileMissionRepository(stateDir);
   const mission = transitionMission(createMission({
     id: 'mission-2',
-    source: 'automation',
+    source: 'manual',
     platform: 'weixin',
     externalScopeId: 'wx-user-2',
     title: 'Daily deploy check',

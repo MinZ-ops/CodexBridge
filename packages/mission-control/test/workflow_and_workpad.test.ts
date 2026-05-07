@@ -167,7 +167,7 @@ Prefer small, verifiable changes and report blockers explicitly.
 test('workpad status view exposes workflow source, blocker, and attempt history', () => {
   const mission = createMission({
     id: 'mission-view-1',
-    source: 'automation',
+    source: 'manual',
     platform: 'weixin',
     externalScopeId: 'wx-user-11',
     title: 'Daily release audit',
@@ -181,7 +181,7 @@ test('workpad status view exposes workflow source, blocker, and attempt history'
   mission.workpad.latestBlocker = 'Waiting for log collection to finish.';
   mission.workpad.latestVerifierSummary = 'No verification yet.';
   mission.workpad.finalResultSummary = 'No final result yet.';
-  mission.workpad.notes.push('Started from daily automation run.');
+  mission.workpad.notes.push('Started from a recurring audit request.');
   const attempts: MissionAttempt[] = [
     {
       id: 'attempt-view-1',
