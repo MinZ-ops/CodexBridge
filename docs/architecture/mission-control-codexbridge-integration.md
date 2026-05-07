@@ -81,6 +81,16 @@ Main remaining integration gap:
     surface and work-item provenance are no longer conflated
   - checklist snapshot source revision/hash provenance is preserved at mission
     creation time instead of being a later host-local reconstruction concern
+- Phase 9c now adds the first package-owned supervision foundation beside that
+  authoritative repository:
+  - Mission Control exports a `MissionSupervisor` that can recover stale
+    leases, derive status snapshots from repository truth, and dispatch
+    supervisable missions until idle through the package runtime
+  - stale `running` missions are re-queued before dispatch, while stale
+    `verifying` / `repairing` missions can continue from persisted attempt
+    state instead of requiring bridge-local shell supervision
+  - paused human-facing states remain explicit host-controlled resumptions, so
+    the bridge still owns user-facing resume intent and approval UX
 - `/agent` `list/show/stop/retry` now consume that package API through an
   authoritative mission repository plus `AgentJob` projection instead of
   rebuilding runtime truth directly from bridge compatibility fields
@@ -93,9 +103,9 @@ Main remaining integration gap:
   state can retain bridge-delivered progress without letting the host mutate
   lifecycle truth directly
 - the next hardening work is finishing source sync beyond initial manual
-  creation, the remaining projection thinning, and Phase 9 supervision
-  semantics, so future Telegram, CLI, or web hosts do not re-implement
-  bridge-local runtime logic
+  creation, wiring explicit stop-intent semantics through package supervision,
+  and continuing to thin the remaining bridge projection seams so future
+  Telegram, CLI, or web hosts do not re-implement bridge-local runtime logic
 
 ## V0 Migration Baseline Sources
 

@@ -573,16 +573,16 @@ that:
   - `pnpm test --test-name-pattern "Mission Control|WORKFLOW\\.md|interrupted provider turn|normal partial provider exit|approval requests" test/core/bridge_coordinator.test.ts`
   - `pnpm test --test-name-pattern "AgentJobService retryJob preserves Mission Control runtime history when re-queueing waiting-human missions|AgentJobService retryJob preserves prior runtime history for fresh reruns via a new mission generation" test/core/agent_job_service.test.ts`
 
-Phase 7 is the current validated baseline, but several behaviors above are still
-transitional:
+Phase 9c is the current validated baseline, but several behaviors above are
+still transitional:
 
 - `AgentJob` still carries bridge-side compatibility state that should keep
   shrinking toward a pure projection/cache
 - `/agent` reads still need to move further toward package-owned
   command/query/timeline contracts
-- source-backed mission sync beyond the initial manual create path and
-  package-owned supervision semantics still belong to the unfinished `Phase 9`
-  backlog
+- source-backed mission sync beyond the initial manual create path, explicit
+  stop-intent semantics, and final `loop.sh` fallback reduction still belong to
+  the unfinished `Phase 9` backlog
 
 ## Phase 7: Checklist-First Domain Hardening
 
@@ -676,6 +676,15 @@ work-item provenance. CodexBridge `/agent` creation now seeds the authoritative
 mission repository through that command with `source=manual` while preserving
 `platform=weixin|telegram` as host-surface binding metadata.
 
+Phase 9c landed: Mission Control now exports a first `MissionSupervisor`
+foundation that works directly from the authoritative repository, recovers
+stale leases before dispatch, derives structured status snapshots/checkpoints
+from persisted mission state, and runs supervisable missions until idle through
+the package runtime. Waiting-human states remain explicit host-controlled
+resumptions, so package supervision can now own recovery/continuation for
+`queued` / `planning` / `running` / `verifying` / `repairing` missions without
+pulling `/auto` or bridge-local shell truth back into Mission Control.
+
 - [x] Add `WorkItemSourceAdapter` as the source abstraction
 - [x] Support manual host-created source-backed work items through the
   package-owned create command
@@ -685,14 +694,14 @@ mission repository through that command with `source=manual` while preserving
   `ChecklistSnapshot` runtime copies
 - [x] Add restricted provider/agent progress update paths for workpad/progress
   reporting without lifecycle-state mutation
-- [ ] Add package-owned supervision semantics that absorb the useful parts of
+- [x] Add package-owned supervision semantics that absorb the useful parts of
   `loop.sh`:
-  - status snapshots
-  - stop markers / stop intents
-  - bounded supervision loops
-  - stale-run recovery
-  - history retention
-  - checkpoint/continuation semantics
+  - [x] status snapshots
+  - [ ] stop markers / stop intents
+  - [x] bounded supervision loops
+  - [x] stale-run recovery
+  - [x] history retention
+  - [x] checkpoint/continuation semantics
 - [ ] Reduce long-lived reliance on external `loop.sh` to an operational
   fallback once package supervision exists
 
@@ -700,7 +709,7 @@ Completion criteria:
 
 - [x] Mission Control can consume and track source-backed work items without
   assuming a chat-only origin
-- [ ] The runtime can recover, continue, and report progress using package-owned
+- [x] The runtime can recover, continue, and report progress using package-owned
   supervision semantics
 - [ ] External shell supervision is optional, not structurally required
 

@@ -36,7 +36,7 @@ It must not own bridge behavior:
 
 Current phase:
 
-- `phase-9b-manual-source-backed-mission-creation`: package-owned mission
+- `phase-9c-package-owned-supervision-foundation`: package-owned mission
   domain/workflow/workspace/provider/verifier/runtime foundations, first-class
   `WorkItem` / `ChecklistSnapshot` / `PlanChangeRequest` /
   `MissionGeneration` lineage, direct in-process `commands / queries / streams`
@@ -47,7 +47,10 @@ Current phase:
   normalized manual source summaries into authoritative
   `WorkItem + Mission + Generation + ChecklistSnapshot` records, and a
   repository-backed progress sink that lets providers/hosts append workpad
-  progress without mutating lifecycle truth
+  progress without mutating lifecycle truth. The package now also exports a
+  first `MissionSupervisor` foundation that recovers stale leases, rebuilds
+  status snapshots from authoritative repository state, and runs supervisable
+  missions until idle without requiring `loop.sh` to own runtime truth.
 
 This package should preserve the Symphony-style separation between:
 

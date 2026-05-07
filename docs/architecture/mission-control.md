@@ -1815,6 +1815,16 @@ Hard limits:
 - timeout per turn
 - artifact count and size limits
 
+Current implementation note:
+
+- the package now has a first supervision foundation that can recover stale
+  leases, rebuild status snapshots from repository truth, and sequentially
+  dispatch supervisable missions (`queued`, `planning`, `running`,
+  `verifying`, `repairing`) until idle
+- `waiting_user`, `needs_human`, `handoff`, and similar paused states remain
+  first-class runtime states, but they are not auto-resumed by supervision
+  without an explicit host control action such as resume/retry
+
 ### 7. Status Surface
 
 Status visibility is required before any web dashboard. The surface may be

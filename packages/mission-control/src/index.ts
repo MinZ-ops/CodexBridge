@@ -1,6 +1,6 @@
 export const MISSION_CONTROL_PACKAGE_NAME = '@codexbridge/mission-control' as const;
 
-export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-9b-manual-source-backed-mission-creation' as const;
+export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-9c-package-owned-supervision-foundation' as const;
 
 export const MISSION_CONTROL_OWNS = [
   'mission-domain-model',
@@ -17,6 +17,7 @@ export const MISSION_CONTROL_OWNS = [
   'work-item-source-contract',
   'source-backed-mission-creation',
   'progress-sink-contract',
+  'supervision-foundation',
 ] as const;
 
 export const MISSION_CONTROL_DOES_NOT_OWN = [
@@ -56,6 +57,7 @@ export * from './host_adapter.js';
 export * from './source.js';
 export * from './source_mission.js';
 export * from './progress.js';
+export * from './supervision.js';
 export * from './codex_provider.js';
 export * from './verifier.js';
 export * from './runtime.js';
