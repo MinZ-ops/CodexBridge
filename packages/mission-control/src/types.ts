@@ -71,6 +71,7 @@ export type MissionVerifierVerdict =
 
 export type MissionEventKind =
   | 'mission.created'
+  | 'mission.source_synced'
   | 'mission.queued'
   | 'mission.stop_requested'
   | 'mission.planning'

@@ -36,7 +36,7 @@ It must not own bridge behavior:
 
 Current phase:
 
-- `phase-9d-persisted-stop-intents`: package-owned mission
+- `phase-9f-pristine-source-sync`: package-owned mission
   domain/workflow/workspace/provider/verifier/runtime foundations, first-class
   `WorkItem` / `ChecklistSnapshot` / `PlanChangeRequest` /
   `MissionGeneration` lineage, direct in-process `commands / queries / streams`
@@ -53,7 +53,11 @@ Current phase:
   missions until idle without requiring `loop.sh` to own runtime truth, and
   persists explicit mission stop requests that runtime/supervision consume at
   safe checkpoints instead of treating host-side stop UX as the source of
-  lifecycle truth.
+  lifecycle truth. Pristine `draft`/`queued` source-backed missions can now
+  also be re-synced through the package command layer before the first attempt
+  starts, so hosts such as CodexBridge no longer need to rewrite authoritative
+  mission/work-item records directly just to keep queued source metadata in
+  sync.
 
 This package should preserve the Symphony-style separation between:
 

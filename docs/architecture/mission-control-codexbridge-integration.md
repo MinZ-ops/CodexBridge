@@ -114,6 +114,17 @@ Main remaining integration gap:
   - if host-side todo edits diverge from the structured payload digest, the
     adapter falls back to the live todo content instead of pretending the stale
     cached checklist is authoritative
+- Phase 9f now adds package-owned pristine source sync on top of that source
+  foundation:
+  - Mission Control exports a `syncMissionSource` command that can replace the
+    authoritative `WorkItem + Mission + MissionGeneration + ChecklistSnapshot`
+    aggregate for a pristine `draft`/`queued` mission before any attempts
+    start, while preserving mission identity and host bindings
+  - CodexBridge `/agent rename` now uses that package command for queued
+    mission source metadata instead of directly rewriting authoritative
+    mission/work-item records through bridge-local repository access
+  - non-pristine mission rename/update fallbacks remain transitional host
+    projection behavior until more package-owned metadata edit commands land
 - `/agent` `list/show/stop/retry` now consume that package API through an
   authoritative mission repository plus `AgentJob` projection instead of
   rebuilding runtime truth directly from bridge compatibility fields
@@ -126,10 +137,11 @@ Main remaining integration gap:
   state can retain bridge-delivered progress without letting the host mutate
   lifecycle truth directly
 - the next hardening work is finishing source sync/reconciliation beyond the
-  current manual create path plus first local todo adapter, reducing long-lived
-  `loop.sh` reliance to a real operational fallback, and continuing to thin the
-  remaining bridge projection seams so future Telegram, CLI, or web hosts do
-  not re-implement bridge-local runtime logic
+  current manual create path, pristine pre-attempt sync path, and first local
+  todo adapter; reducing long-lived `loop.sh` reliance to a real operational
+  fallback; and continuing to thin the remaining bridge projection seams so
+  future Telegram, CLI, or web hosts do not re-implement bridge-local runtime
+  logic
 
 ## V0 Migration Baseline Sources
 

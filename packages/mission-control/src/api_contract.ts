@@ -195,6 +195,13 @@ export interface CreateMissionCommandInput {
   actor?: MissionControlActor | null;
 }
 
+export interface SyncMissionSourceInput {
+  missionId: string;
+  workItem: WorkItemSourceSummary;
+  reason?: string | null;
+  actor?: MissionControlActor | null;
+}
+
 export interface ResumeMissionInput {
   missionId: string;
   reason?: string | null;
@@ -225,6 +232,9 @@ export type MissionStreamFrame =
 export interface MissionControlCommands {
   createMission(
     request: MissionControlRequest<CreateMissionCommandInput>,
+  ): MissionControlResponse<MissionDetailView>;
+  syncMissionSource(
+    request: MissionControlRequest<SyncMissionSourceInput>,
   ): MissionControlResponse<MissionDetailView>;
   retryMission(
     request: MissionControlRequest<RetryMissionInput>,

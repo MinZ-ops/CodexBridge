@@ -378,6 +378,10 @@ Source-layer rules:
   depend on normalized work-item semantics rather than vendor-specific payloads
 - checklist ownership may live beside a work-item source, but runtime truth
   still belongs to Mission Control snapshots
+- pristine `draft`/`queued` missions may be re-synced from source through a
+  package-owned command before attempts start; once attempts or plan-change
+  history exist, source drift should become explicit runtime/human handling
+  instead of a destructive in-place rewrite
 
 ### 2. Workflow Contract Layer
 
@@ -849,6 +853,7 @@ type MissionEvent = {
   checklistItemId: string | null;
   kind:
     | "mission.created"
+    | "mission.source_synced"
     | "mission.ready"
     | "mission.queued"
     | "mission.planned"
@@ -1825,6 +1830,10 @@ Current implementation note:
   authoritative mission record; runtime and supervision consume that request at
   safe checkpoints instead of treating host-side process interruption as the
   lifecycle source of truth
+- pristine source-backed missions can now be refreshed through a package-owned
+  source-sync command before the first attempt begins, so hosts do not need to
+  patch authoritative mission/checklist/work-item records directly just to keep
+  queued source metadata aligned
 - `waiting_user`, `needs_human`, `handoff`, and similar paused states remain
   first-class runtime states, but they are not auto-resumed by supervision
   without an explicit host control action such as resume/retry

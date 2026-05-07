@@ -11,13 +11,16 @@ import {
 } from './control_actions.js';
 import { getLatestMissionCycleResult } from './cycle_result.js';
 import { createMissionAggregateFromSourceSummary } from './source_mission.js';
+import { createWorkItemSourceSummary } from './source.js';
 import type { MissionRepository } from './repository.js';
 import type {
+  ChecklistSnapshot,
   Mission,
   MissionAttempt,
   MissionEvent,
   MissionPendingApproval,
   MissionStopRequest,
+  WorkItem,
 } from './types.js';
 import type {
   CreateMissionCommandInput,
@@ -46,6 +49,7 @@ import type {
   MissionTimelineView,
   ResumeMissionInput,
   RetryMissionInput,
+  SyncMissionSourceInput,
   StopMissionInput,
   StreamMissionInput,
 } from './api_contract.js';
@@ -79,6 +83,7 @@ export class DirectMissionControlApi implements MissionControlApi {
     this.generateId = generateId;
     this.commands = {
       createMission: (request) => this.handleCreateMission(request),
+      syncMissionSource: (request) => this.handleSyncMissionSource(request),
       retryMission: (request) => this.handleRetryMission(request),
       resumeMission: (request) => this.handleResumeMission(request),
       stopMission: (request) => this.handleStopMission(request),
@@ -244,6 +249,114 @@ export class DirectMissionControlApi implements MissionControlApi {
       metadata: buildActorMetadata(request.input.actor),
     }));
     return withMeta(request.meta, this.buildMissionDetailView(retried.mission));
+  }
+
+  private handleSyncMissionSource(
+    request: MissionControlRequest<SyncMissionSourceInput>,
+  ): MissionControlResponse<MissionDetailView> {
+    const mission = this.requireMission(request.input.missionId);
+    if (!canSyncMissionSource(this.repository, mission)) {
+      throw new Error(`Mission source can only be synced before attempts start: ${mission.id}`);
+    }
+    const existingWorkItem = this.repository.getWorkItemById(mission.workItemId);
+    const existingGeneration = this.repository.getGenerationById(mission.activeGenerationId);
+    const existingChecklistSnapshot = this.repository.getChecklistSnapshotById(mission.currentChecklistSnapshotId);
+    const nextSourceSummary = createWorkItemSourceSummary(request.input.workItem);
+    const currentSourceSummary = buildMissionSourceSummary(mission, existingWorkItem, existingChecklistSnapshot);
+    if (
+      nextSourceSummary.source !== mission.source
+      || nextSourceSummary.sourceRef !== currentSourceSummary.sourceRef
+    ) {
+      throw new Error(`Mission source sync must preserve source identity: ${mission.id}`);
+    }
+    if (JSON.stringify(nextSourceSummary) === JSON.stringify(currentSourceSummary)) {
+      return withMeta(request.meta, this.buildMissionDetailView(mission));
+    }
+
+    const at = this.now();
+    const reason = normalizeText(request.input.reason) ?? 'Mission source synced before execution.';
+    const synced = createMissionAggregateFromSourceSummary({
+      missionId: mission.id,
+      workItem: nextSourceSummary,
+      platform: mission.platform,
+      externalScopeId: mission.externalScopeId,
+      providerProfileId: mission.providerProfileId,
+      loopPolicy: mission.loopPolicy,
+      priority: mission.priority,
+      riskLevel: mission.riskLevel,
+      cwd: mission.cwd,
+      workspacePath: mission.workspacePath,
+      workflowPath: mission.workflowPath,
+      bridgeSessionId: mission.bridgeSessionId,
+      codexThreadId: mission.codexThreadId,
+      maxAttempts: mission.maxAttempts,
+      maxTurns: mission.maxTurns,
+      initialStatus: mission.status === 'draft' ? 'draft' : 'queued',
+      reason,
+      now: at,
+    });
+    const syncedMission: Mission = {
+      ...synced.mission,
+      createdAt: mission.createdAt,
+      updatedAt: at,
+    };
+    const syncedWorkItem: WorkItem = {
+      ...synced.workItem,
+      createdAt: existingWorkItem?.createdAt ?? mission.createdAt,
+      updatedAt: at,
+    };
+    const syncedGeneration = {
+      ...synced.generation,
+      createdAt: existingGeneration?.createdAt ?? mission.createdAt,
+      updatedAt: at,
+      completedAt: null,
+      supersededAt: null,
+    };
+    const syncedChecklistSnapshot: ChecklistSnapshot = {
+      ...synced.checklistSnapshot,
+      createdAt: existingChecklistSnapshot?.createdAt ?? at,
+      updatedAt: at,
+    };
+
+    this.repository.resetMission(syncedMission);
+    this.repository.saveWorkItem(syncedWorkItem);
+    this.repository.saveGeneration(syncedGeneration);
+    this.repository.saveChecklistSnapshot(syncedChecklistSnapshot);
+    this.repository.appendEvent(this.createMissionEvent({
+      mission: syncedMission,
+      attemptId: null,
+      kind: 'mission.created',
+      summary: 'Mission created from a source-backed work item.',
+      metadata: {
+        source: syncedMission.source,
+        sourceRef: syncedMission.sourceRef,
+        sourceRevision: nextSourceSummary.sourceRevision,
+        ...buildActorMetadata(request.input.actor),
+      },
+    }));
+    this.repository.appendEvent(this.createMissionEvent({
+      mission: syncedMission,
+      attemptId: null,
+      kind: 'mission.source_synced',
+      summary: reason,
+      metadata: {
+        previousSourceRevision: currentSourceSummary.sourceRevision,
+        sourceRevision: nextSourceSummary.sourceRevision,
+        previousChecklistHash: existingChecklistSnapshot?.hash ?? null,
+        checklistHash: syncedChecklistSnapshot.hash,
+        ...buildActorMetadata(request.input.actor),
+      },
+    }));
+    if (syncedMission.status === 'queued') {
+      this.repository.appendEvent(this.createMissionEvent({
+        mission: syncedMission,
+        attemptId: null,
+        kind: 'mission.queued',
+        summary: reason,
+        metadata: buildActorMetadata(request.input.actor),
+      }));
+    }
+    return withMeta(request.meta, this.buildMissionDetailView(syncedMission));
   }
 
   private handleResumeMission(
@@ -527,6 +640,7 @@ function buildMissionArtifactRefs(resultArtifacts: unknown[]): MissionArtifactRe
 function buildActorMetadata(
   actor:
     | CreateMissionCommandInput['actor']
+    | SyncMissionSourceInput['actor']
     | RetryMissionInput['actor']
     | ResumeMissionInput['actor']
     | StopMissionInput['actor'],
@@ -557,6 +671,35 @@ function cloneStopRequest(value: MissionStopRequest | null): MissionStopRequest 
   return {
     ...value,
   };
+}
+
+function buildMissionSourceSummary(
+  mission: Mission,
+  workItem: WorkItem | null,
+  checklistSnapshot: ChecklistSnapshot | null,
+) {
+  return createWorkItemSourceSummary({
+    source: mission.source,
+    sourceRef: workItem?.sourceRef ?? mission.sourceRef ?? mission.id,
+    sourceRevision: workItem?.sourceRevision ?? checklistSnapshot?.sourceRevision ?? null,
+    title: workItem?.title ?? mission.title,
+    goal: mission.goal,
+    expectedOutput: checklistSnapshot?.expectedOutput ?? mission.expectedOutput,
+    acceptanceCriteria: checklistSnapshot?.acceptanceCriteria ?? mission.acceptanceCriteria,
+    plan: checklistSnapshot?.plan ?? mission.plan,
+    metadata: workItem?.metadata ?? null,
+  });
+}
+
+function canSyncMissionSource(repository: MissionRepository, mission: Mission): boolean {
+  return (
+    (mission.status === 'draft' || mission.status === 'queued')
+    && mission.activeAttemptId === null
+    && mission.stopRequest === null
+    && mission.attemptCount === 0
+    && repository.listAttempts(mission.id).length === 0
+    && repository.listPlanChangeRequests(mission.id).length === 0
+  );
 }
 
 function isTerminalAttemptStatus(status: MissionAttempt['status']): boolean {

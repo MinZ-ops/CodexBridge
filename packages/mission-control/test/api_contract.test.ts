@@ -150,6 +150,175 @@ test('direct mission control api can create a queued mission from a source-backe
   assert.equal(nowRef.value, 1_701_200_050_002);
 });
 
+test('direct mission control api can sync a pristine mission from a refreshed source summary before attempts start', async () => {
+  const { repo, api, nowRef } = createApiHarness(1_701_200_060_000);
+
+  await api.commands.createMission({
+    meta: {
+      requestId: 'req-sync-create-1',
+      correlationId: null,
+      idempotencyKey: null,
+    },
+    input: {
+      missionId: 'mission-api-sync-1',
+      workItem: {
+        source: 'manual',
+        sourceRef: 'manual:api-sync-1',
+        sourceRevision: 'manual-rev-1',
+        title: 'Repair the preview timeout',
+        goal: 'Repair the preview timeout without regressing the chat flow.',
+        expectedOutput: 'A verified repair summary.',
+        acceptanceCriteria: ['Patch exists', 'Targeted test passes'],
+        plan: ['Inspect the timeout path', 'Patch the flaky branch', 'Verify the fix'],
+        metadata: {
+          category: 'code',
+        },
+      },
+      platform: 'weixin',
+      externalScopeId: 'wx-user-sync-1',
+      providerProfileId: 'codex-default',
+      bridgeSessionId: 'session-api-sync-1',
+      codexThreadId: 'thread-api-sync-1',
+      cwd: '/repo',
+      riskLevel: 'medium',
+      maxAttempts: 3,
+      maxTurns: 8,
+      initialStatus: 'queued',
+      reason: 'Mission queued from the manual work item source.',
+      actor: {
+        actorId: 'test-host',
+        actorType: 'host',
+      },
+    },
+  });
+  const createdMission = repo.getMissionById('mission-api-sync-1');
+  const createdSnapshot = repo.getChecklistSnapshotById('mission-api-sync-1:checklist:1');
+
+  nowRef.value += 50;
+
+  const synced = await api.commands.syncMissionSource({
+    meta: {
+      requestId: 'req-sync-1',
+      correlationId: 'corr-sync-1',
+      idempotencyKey: null,
+    },
+    input: {
+      missionId: 'mission-api-sync-1',
+      workItem: {
+        source: 'manual',
+        sourceRef: 'manual:api-sync-1',
+        sourceRevision: 'manual-rev-2',
+        title: 'Repair the preview timeout quickly',
+        goal: 'Repair the preview timeout and keep the delivery path stable.',
+        expectedOutput: 'A refreshed verified repair summary.',
+        acceptanceCriteria: ['Patch exists', 'Targeted test passes', 'Delivery preview stays stable'],
+        plan: ['Inspect the timeout path', 'Patch the flaky branch', 'Verify the fix', 'Check preview delivery'],
+        metadata: {
+          category: 'code',
+          sync: true,
+        },
+      },
+      reason: 'Mission source synced before execution.',
+      actor: {
+        actorId: 'test-host',
+        actorType: 'host',
+      },
+    },
+  });
+
+  assert.equal(synced.meta.requestId, 'req-sync-1');
+  assert.equal(synced.data.mission.title, 'Repair the preview timeout quickly');
+  assert.equal(synced.data.mission.immutableGoal, 'Repair the preview timeout and keep the delivery path stable.');
+  assert.equal(synced.data.workItem?.sourceRevision, 'manual-rev-2');
+  assert.deepEqual(synced.data.workItem?.metadata, {
+    category: 'code',
+    sync: true,
+  });
+  assert.deepEqual(
+    synced.data.currentChecklistSnapshot?.acceptanceCriteria,
+    ['Patch exists', 'Targeted test passes', 'Delivery preview stays stable'],
+  );
+  assert.deepEqual(
+    synced.data.currentChecklistSnapshot?.plan,
+    ['Inspect the timeout path', 'Patch the flaky branch', 'Verify the fix', 'Check preview delivery'],
+  );
+  assert.equal(synced.data.mission.createdAt, createdMission?.createdAt);
+  assert.equal(synced.data.currentChecklistSnapshot?.createdAt, createdSnapshot?.createdAt);
+  assert.notEqual(synced.data.currentChecklistSnapshot?.hash, createdSnapshot?.hash);
+
+  const events = repo.listEvents('mission-api-sync-1');
+  assert.deepEqual(events.map((event) => event.kind), ['mission.created', 'mission.source_synced', 'mission.queued']);
+  assert.equal(events[1]?.metadata.previousSourceRevision, 'manual-rev-1');
+  assert.equal(events[1]?.metadata.sourceRevision, 'manual-rev-2');
+});
+
+test('direct mission control api rejects source sync once a mission has started attempts', () => {
+  const { repo, api, nowRef } = createApiHarness(1_701_200_070_000);
+  const queued = createQueuedMission(nowRef.value);
+  const running = transitionMission(queued, 'running', {
+    at: nowRef.value + 20,
+    activeAttemptId: 'attempt-api-sync-running-1',
+  });
+  running.attemptCount = 1;
+  const attempt: MissionAttempt = {
+    id: 'attempt-api-sync-running-1',
+    missionId: running.id,
+    generationId: running.activeGenerationId,
+    generationIndex: running.activeGenerationIndex,
+    checklistSnapshotId: running.currentChecklistSnapshotId,
+    index: 1,
+    status: 'running',
+    providerRunId: 'run-api-sync-running-1',
+    providerThreadId: 'thread-api-sync-running-1',
+    promptDigest: 'digest-api-sync-running-1',
+    verifierVerdict: null,
+    verifierSummary: null,
+    missingAcceptanceCriteria: [],
+    outputPreview: null,
+    error: null,
+    startedAt: nowRef.value + 20,
+    endedAt: null,
+    createdAt: nowRef.value + 20,
+    updatedAt: nowRef.value + 20,
+  };
+
+  repo.saveMission(running);
+  repo.saveWorkItem(createMissionWorkItem(running, { at: nowRef.value + 5 }));
+  repo.saveGeneration(createMissionGeneration(running, {
+    at: nowRef.value + 5,
+    trigger: 'initial',
+  }));
+  repo.saveChecklistSnapshot(createMissionChecklistSnapshot(running, {
+    at: nowRef.value + 6,
+    generationId: running.activeGenerationId,
+  }));
+  repo.saveAttempt(attempt);
+
+  assert.throws(() => {
+    api.commands.syncMissionSource({
+      meta: {
+        requestId: 'req-sync-reject-1',
+        correlationId: null,
+        idempotencyKey: null,
+      },
+      input: {
+        missionId: running.id,
+        workItem: {
+          source: 'weixin',
+          sourceRef: running.sourceRef ?? running.id,
+          sourceRevision: 'sync-reject-rev-1',
+          title: 'Should not overwrite a running mission',
+          goal: 'Changed goal',
+          expectedOutput: 'Changed output',
+          acceptanceCriteria: ['Changed acceptance'],
+          plan: ['Changed plan'],
+          metadata: null,
+        },
+      },
+    });
+  }, /before attempts start/);
+});
+
 test('direct mission control api exposes package-owned query views with boundary metadata', async () => {
   const { repo, api, nowRef } = createApiHarness();
   const queued = createQueuedMission(nowRef.value);

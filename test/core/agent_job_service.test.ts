@@ -101,6 +101,10 @@ test('AgentJobService keeps package-owned mission authority when AgentJob compat
     missionRepository.getWorkItemById(`${created.id}:work-item`)?.title,
     'Renamed authority task',
   );
+  assert.deepEqual(
+    missionRepository.listEvents(created.id).map((event) => event.kind),
+    ['mission.created', 'mission.source_synced', 'mission.queued'],
+  );
 });
 
 test('AgentJobService createJob seeds a manual source-backed mission while keeping host bindings separate', () => {

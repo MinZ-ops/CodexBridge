@@ -589,17 +589,26 @@ goal/output/acceptance/plan payloads plus source metadata, derives a stable
 `sourceRevision` from local record state, and falls back to the live todo
 content whenever host-side edits invalidate the structured payload digest.
 
-Phase 9e is the current validated baseline, but several behaviors above are
+Phase 9f landed: Mission Control now exposes a package-owned
+`syncMissionSource` command for pristine `draft`/`queued` missions so a
+source-backed work item can refresh the authoritative
+`WorkItem + Mission + MissionGeneration + ChecklistSnapshot` aggregate before
+the first attempt starts. CodexBridge queued `/agent rename` now uses that
+path when possible instead of rewriting authoritative mission/work-item state
+directly through bridge-local repository access.
+
+Phase 9f is the current validated baseline, but several behaviors above are
 still transitional:
 
 - `AgentJob` still carries bridge-side compatibility state that should keep
   shrinking toward a pure projection/cache
 - `/agent` reads still need to move further toward package-owned
   command/query/timeline contracts
-- source-backed mission sync now reaches both the initial manual create path
-  and a first assistant-record-backed `local-todo` adapter, but broader source
-  sync/reconciliation and final `loop.sh` fallback reduction still belong to
-  the unfinished `Phase 9` backlog
+- source-backed mission sync now reaches the initial manual create path, a
+  pristine pre-attempt refresh path, and a first assistant-record-backed
+  `local-todo` adapter, but broader source sync/reconciliation and final
+  `loop.sh` fallback reduction still belong to the unfinished `Phase 9`
+  backlog
 
 ## Phase 7: Checklist-First Domain Hardening
 
@@ -716,10 +725,18 @@ work items plus source revisions, preserves structured goal/output/checklist
 payloads in the host-owned local source, and falls back to the live todo
 content when host-side edits invalidate that structured payload digest.
 
+Phase 9f landed: Mission Control now adds a package-owned pristine source sync
+command that can refresh an untouched source-backed mission aggregate before
+the first attempt starts, while preserving mission identity and host bindings.
+CodexBridge queued `/agent rename` now uses that command when possible so the
+authoritative mission/work-item path stays inside the package boundary.
+
 - [x] Add `WorkItemSourceAdapter` as the source abstraction
 - [x] Support manual host-created source-backed work items through the
   package-owned create command
 - [x] Support local todo/checklist source adapters
+- [x] Support package-owned pristine source sync/reconciliation before the
+  first attempt starts
 - [ ] Support future issue/board integrations
 - [x] Keep external checklist/source truth separate from internal immutable
   `ChecklistSnapshot` runtime copies

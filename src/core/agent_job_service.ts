@@ -2,6 +2,7 @@ import crypto from 'node:crypto';
 import {
   canTransitionMissionStatus,
   createManualWorkItemSourceSummary,
+  createWorkItemSourceSummary,
   DirectMissionControlApi,
   transitionMission,
   type Mission,
@@ -236,7 +237,9 @@ export class AgentJobService {
     const renamed = this.updateJob(id, {
       title: normalizeTitle(title, 'Agent'),
     });
-    this.syncMissionTitleProjection(renamed);
+    if (!this.syncMissionSourceProjection(renamed)) {
+      this.syncMissionTitleProjection(renamed);
+    }
     return this.requireById(id);
   }
 
@@ -609,6 +612,51 @@ export class AgentJobService {
       title: job.title,
       updatedAt: this.now(),
     });
+  }
+
+  private syncMissionSourceProjection(job: AgentJob): boolean {
+    if (!this.missionAuthorityRepository) {
+      return false;
+    }
+    const detail = this.getMissionDetail(job.id);
+    if (
+      !detail?.workItem
+      || !detail.currentChecklistSnapshot
+      || detail.attempts.length > 0
+      || detail.planChangeRequests.length > 0
+      || detail.mission.activeAttemptId
+      || detail.mission.stopRequest
+      || (detail.mission.status !== 'draft' && detail.mission.status !== 'queued')
+    ) {
+      return false;
+    }
+    try {
+      this.createMissionControlApi().commands.syncMissionSource({
+        meta: this.createMissionControlMeta(`agent-sync-source:${job.id}`),
+        input: {
+          missionId: job.id,
+          workItem: createWorkItemSourceSummary({
+            source: detail.workItem.source,
+            sourceRef: detail.workItem.sourceRef ?? detail.mission.sourceRef ?? job.id,
+            sourceRevision: detail.workItem.sourceRevision,
+            title: job.title,
+            goal: detail.mission.goal,
+            expectedOutput: detail.currentChecklistSnapshot.expectedOutput ?? detail.mission.expectedOutput,
+            acceptanceCriteria: detail.currentChecklistSnapshot.acceptanceCriteria,
+            plan: detail.currentChecklistSnapshot.plan,
+            metadata: detail.workItem.metadata,
+          }),
+          reason: 'Agent mission source synced after host rename.',
+          actor: {
+            actorId: 'agent-job-service',
+            actorType: 'host',
+          },
+        },
+      });
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   private createMissionControlMeta(requestId: string) {
