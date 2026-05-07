@@ -1,5 +1,7 @@
 export type MissionStatus =
   | 'draft'
+  | 'awaiting_checklist_confirm'
+  | 'awaiting_prompt_confirm'
   | 'queued'
   | 'planning'
   | 'running'
@@ -72,6 +74,8 @@ export type MissionVerifierVerdict =
 export type MissionEventKind =
   | 'mission.created'
   | 'mission.source_synced'
+  | 'mission.awaiting_checklist_confirm'
+  | 'mission.awaiting_prompt_confirm'
   | 'mission.queued'
   | 'mission.stop_requested'
   | 'mission.planning'

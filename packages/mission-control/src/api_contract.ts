@@ -242,6 +242,13 @@ export interface ResumeMissionInput {
   actor?: MissionControlActor | null;
 }
 
+export interface StartMissionInput {
+  missionId: string;
+  confirmChecklist?: boolean | null;
+  confirmPrompt?: boolean | null;
+  actor?: MissionControlActor | null;
+}
+
 export interface StopMissionInput {
   missionId: string;
   reason?: string | null;
@@ -266,6 +273,9 @@ export type MissionStreamFrame =
 export interface MissionControlCommands {
   createMission(
     request: MissionControlRequest<CreateMissionCommandInput>,
+  ): MissionControlResponse<MissionDetailView>;
+  startMission(
+    request: MissionControlRequest<StartMissionInput>,
   ): MissionControlResponse<MissionDetailView>;
   syncMissionSource(
     request: MissionControlRequest<SyncMissionSourceInput>,

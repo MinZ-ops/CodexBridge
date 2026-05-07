@@ -181,6 +181,8 @@ export type AgentJobRiskLevel = 'low' | 'medium' | 'high';
 export type AgentJobMode = 'codex' | 'agents' | 'hybrid';
 
 export type AgentJobStatus =
+  | 'awaiting_checklist_confirm'
+  | 'awaiting_prompt_confirm'
   | 'queued'
   | 'planning'
   | 'running'

@@ -291,6 +291,8 @@ export function createMissionRetryAggregate(
 export function mapMissionStatusToGenerationStatus(status: MissionStatus): MissionGenerationStatus {
   switch (status) {
     case 'draft':
+    case 'awaiting_checklist_confirm':
+    case 'awaiting_prompt_confirm':
     case 'queued':
     case 'planning':
     case 'running':

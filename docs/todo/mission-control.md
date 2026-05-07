@@ -627,7 +627,15 @@ without importing CodexBridge runtime code. Later hosts can therefore validate
 the same mission core behavior through package-owned APIs instead of requiring
 bridge-specific naming or runner logic.
 
-Phase 9k is the current validated baseline, but several behaviors above are
+Phase 9l landed: Mission Control now exposes a package-owned `startMission`
+command plus concrete `awaiting_checklist_confirm` /
+`awaiting_prompt_confirm` lifecycle states for the first autonomous run.
+CodexBridge `/agent confirm` now creates a drafted authoritative mission,
+walks the user through checklist confirmation and immutable-prompt
+confirmation before queueing the mission, and `/agent show` surfaces those
+package-backed start gates directly from mission detail state.
+
+Phase 9l is the current validated baseline, but several behaviors above are
 still transitional:
 
 - `AgentJob` still carries bridge-side compatibility state that should keep
@@ -638,9 +646,6 @@ still transitional:
   pristine pre-attempt refresh path with authoritative lineage retention, and a
   first assistant-record-backed `local-todo` adapter, but broader source
   sync/reconciliation still belongs to the unfinished backlog
-- the first host surface still does not gate mission start on explicit
-  user-confirmed `immutablePrompt` plus initial checklist confirmation before
-  the first autonomous cycle begins
 - the first host surface still lacks package-backed loop snapshot UX for
   `currentCycle` / current item / overall completion / next step / blocker /
   verifier summary, so users still fall back to external loop output more often
@@ -810,21 +815,24 @@ history.
   first attempt starts
 - [x] Add package-owned workflow/checklist/workpad read models so hosts can
   render authoritative mission state without bridge-local reconstruction
-- [ ] Reconcile the concrete package status machine with the formal spec around
+- [x] Reconcile the concrete package status machine with the formal spec around
   explicit:
   - `awaiting_checklist_confirm`
   - `awaiting_prompt_confirm`
+- [ ] Reconcile the concrete package status machine with the formal spec around
+  explicit:
   - `scope_change_pending`
   - `max_loops_reached`
-- [ ] Add package-owned command coverage for:
+- [x] Add package-owned command coverage for:
   - `startMission`
+- [ ] Add package-owned command coverage for:
   - approval resolution
   - plan-change resolution
 - [ ] Add package-owned mission snapshot subscription/read surfaces that map
   cleanly onto the formal `streamMissionSnapshots` / loop-status model
-- [ ] Expose first-host start gates for `awaiting_checklist_confirm` and
+- [x] Expose first-host start gates for `awaiting_checklist_confirm` and
   `awaiting_prompt_confirm` before the first autonomous cycle begins
-- [ ] Require the first host to persist and explicitly confirm the
+- [x] Require the first host to persist and explicitly confirm the
   `immutablePrompt` plus initial checklist snapshot instead of treating
   `/agent confirm` as a generic background-job launch
 - [ ] Add package-backed mission snapshot views to the first host so users can
@@ -864,7 +872,7 @@ Completion criteria:
 - [x] External shell supervision is optional, not structurally required
 - [ ] The concrete package commands/status model converges with the formal spec
   for confirmation, paused-state, and loop-budget lifecycle control
-- [ ] A first host can require explicit `immutablePrompt` plus initial
+- [x] A first host can require explicit `immutablePrompt` plus initial
   checklist confirmation before the first autonomous cycle starts
 - [ ] A first host can inspect package-owned cycle/stage/completion snapshots
   and resolve plan changes or paused states without reading shell logs
@@ -922,7 +930,7 @@ Mission Control is ready for broader extraction when:
 - [ ] the concrete package API/state machine matches the formal spec for
   `startMission`, approval / plan-change resolution, snapshot streaming, and
   confirmation/budget states
-- [ ] the first host can persist and confirm an immutable prompt plus initial
+- [x] the first host can persist and confirm an immutable prompt plus initial
   checklist before autonomous looping begins
 - [ ] the first host can render package-owned loop snapshots and resolve
   `PlanChangeRequest` / `waiting_user` / `needs_human` without shell-log

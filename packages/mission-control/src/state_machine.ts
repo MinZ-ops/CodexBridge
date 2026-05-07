@@ -17,7 +17,9 @@ import {
 } from './domain_records.js';
 
 export const MISSION_STATUS_TRANSITIONS: Readonly<Record<MissionStatus, readonly MissionStatus[]>> = Object.freeze({
-  draft: ['queued', 'stopped', 'archived'],
+  draft: ['awaiting_checklist_confirm', 'awaiting_prompt_confirm', 'queued', 'stopped', 'archived'],
+  awaiting_checklist_confirm: ['awaiting_prompt_confirm', 'queued', 'stopped', 'archived'],
+  awaiting_prompt_confirm: ['queued', 'stopped', 'archived'],
   queued: ['planning', 'running', 'stopped', 'archived'],
   planning: ['queued', 'running', 'blocked', 'failed', 'stopped'],
   running: ['verifying', 'repairing', 'waiting_user', 'needs_human', 'handoff', 'blocked', 'failed', 'stopped'],

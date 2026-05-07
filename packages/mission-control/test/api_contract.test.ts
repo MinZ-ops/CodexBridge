@@ -193,6 +193,89 @@ test('direct mission control api exposes host-neutral binding views from generic
   assert.equal(created.data.hostBindings.codexThreadId, 'thread-cli-create-1');
 });
 
+test('direct mission control api stages checklist and immutable prompt confirmation before the first queue', async () => {
+  const { repo, api } = createApiHarness(1_701_200_057_000);
+
+  const created = await api.commands.createMission({
+    meta: {
+      requestId: 'req-start-create-1',
+      correlationId: null,
+      idempotencyKey: null,
+    },
+    input: {
+      missionId: 'mission-api-start-1',
+      workItem: {
+        source: 'manual',
+        sourceRef: 'manual:api-start-1',
+        sourceRevision: 'manual-start-rev-1',
+        title: 'Stabilize the preview flow',
+        goal: 'Stabilize the preview flow before the first autonomous run.',
+        expectedOutput: 'A verified preview-flow repair summary.',
+        acceptanceCriteria: ['Patch exists', 'Targeted test passes'],
+        plan: ['Inspect the preview flow', 'Patch the flaky branch', 'Verify the result'],
+        metadata: null,
+      },
+      platform: 'weixin',
+      externalScopeId: 'wx-user-start-1',
+      providerProfileId: 'codex-default',
+      initialStatus: 'draft',
+    },
+  });
+
+  assert.equal(created.data.mission.status, 'draft');
+  assert.equal(repo.listEvents('mission-api-start-1').map((event) => event.kind).join(','), 'mission.created');
+
+  const checklistPending = await api.commands.startMission({
+    meta: {
+      requestId: 'req-start-checklist-1',
+      correlationId: null,
+      idempotencyKey: null,
+    },
+    input: {
+      missionId: 'mission-api-start-1',
+    },
+  });
+  assert.equal(checklistPending.data.mission.status, 'awaiting_checklist_confirm');
+  assert.match(checklistPending.data.pendingApproval?.summary ?? '', /checklist/i);
+
+  const promptPending = await api.commands.startMission({
+    meta: {
+      requestId: 'req-start-prompt-1',
+      correlationId: null,
+      idempotencyKey: null,
+    },
+    input: {
+      missionId: 'mission-api-start-1',
+      confirmChecklist: true,
+    },
+  });
+  assert.equal(promptPending.data.mission.status, 'awaiting_prompt_confirm');
+  assert.match(promptPending.data.pendingApproval?.summary ?? '', /immutable prompt/i);
+
+  const queued = await api.commands.startMission({
+    meta: {
+      requestId: 'req-start-queue-1',
+      correlationId: null,
+      idempotencyKey: null,
+    },
+    input: {
+      missionId: 'mission-api-start-1',
+      confirmPrompt: true,
+    },
+  });
+  assert.equal(queued.data.mission.status, 'queued');
+  assert.equal(queued.data.pendingApproval, null);
+  assert.deepEqual(
+    repo.listEvents('mission-api-start-1').map((event) => event.kind),
+    [
+      'mission.created',
+      'mission.awaiting_checklist_confirm',
+      'mission.awaiting_prompt_confirm',
+      'mission.queued',
+    ],
+  );
+});
+
 test('direct mission control api can sync a pristine mission from a refreshed source summary before attempts start', async () => {
   const { repo, api, nowRef } = createApiHarness(1_701_200_060_000);
 

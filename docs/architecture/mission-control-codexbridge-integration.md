@@ -175,9 +175,20 @@ Main remaining integration gap:
   - the proof does not import CodexBridge runtime/store/i18n layers, so the
     same mission core behavior is now validated outside the `/agent`
     integration path
-  - this later-host proof does not yet mean the first host UX is complete:
-    CodexBridge still needs explicit prompt/checklist confirmation gates plus
+  - this later-host proof did not yet mean the first host UX was complete:
+    CodexBridge still needed explicit prompt/checklist confirmation gates plus
     paused-state and loop-snapshot surfaces on top of the package contract
+- Phase 9l now adds the first host-owned product start gates on top of that
+  package contract:
+  - Mission Control exports a package-owned `startMission` command plus
+    concrete `awaiting_checklist_confirm` /
+    `awaiting_prompt_confirm` states and workflow pending-approval payloads for
+    the first autonomous cycle
+  - CodexBridge `/agent confirm` now creates a drafted authoritative mission,
+    walks the user through checklist confirmation and immutable-prompt
+    confirmation, and only then queues the mission for supervision
+  - `/agent show` now renders those package-backed start gates from mission
+    detail instead of relying on bridge-local draft text after creation time
 - `/agent` `list/show/stop/retry` now consume that package API through an
   authoritative mission repository plus `AgentJob` projection instead of
   rebuilding runtime truth directly from bridge compatibility fields
@@ -193,8 +204,6 @@ Main remaining integration gap:
   beyond the current manual create path, append-oriented pristine pre-attempt
   sync path, and first local todo adapter; continuing to shrink `AgentJob`
   compatibility caches; and finishing the first-host product flow around:
-  - explicit `immutablePrompt` confirmation before the first autonomous cycle
-  - explicit initial checklist confirmation before the first autonomous cycle
   - host-side resolution for `PlanChangeRequest`, `waiting_user`, and
     `needs_human`
   - package-backed mission snapshot UX for cycle/stage/completion/next-step

@@ -1,6 +1,6 @@
 export const MISSION_CONTROL_PACKAGE_NAME = '@codexbridge/mission-control' as const;
 
-export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-9k-host-neutral-proof' as const;
+export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-9l-start-gates' as const;
 
 export const MISSION_CONTROL_OWNS = [
   'mission-domain-model',

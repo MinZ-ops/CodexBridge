@@ -751,6 +751,34 @@ async function waitForCondition(predicate, { timeoutMs = 1000, intervalMs = 10 }
   throw new Error('Timed out waiting for condition');
 }
 
+async function fullyConfirmLatestAgentJob(runtime, externalScopeId: string) {
+  const created = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId,
+    text: '/agent confirm',
+  });
+  const index = runtime.services.agentJobs.listForScope({
+    platform: 'weixin',
+    externalScopeId,
+  }).length;
+  const checklist = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId,
+    text: `/agent confirm ${index}`,
+  });
+  const queued = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId,
+    text: `/agent confirm ${index}`,
+  });
+  return {
+    created,
+    checklist,
+    queued,
+    index,
+  };
+}
+
 test('bridge coordinator creates a default-provider session for normal text and starts a turn', async () => {
   const { runtime, openai } = makeRuntime();
 
@@ -6869,12 +6897,29 @@ test('/agent drafts, confirms, runs, verifies, and records a background job', as
     assert.match(draftText, /Agent 草案/);
     assert.match(draftText, /确认：\/agent confirm/);
 
-    const confirmed = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    const created = await runtime.services.bridgeCoordinator.handleInboundEvent({
       platform: 'weixin',
       externalScopeId: 'wx-agent-1',
       text: '/agent confirm',
     });
-    assert.match(confirmed.messages.map((message) => message.text).join('\n'), /Agent 任务已创建并排队/);
+    assert.match(created.messages.map((message) => message.text).join('\n'), /等待启动确认/);
+    assert.match(created.messages.map((message) => message.text).join('\n'), /初版 checklist/);
+    assert.equal(created.meta?.systemAction, undefined);
+
+    const checklistConfirmed = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-1',
+      text: '/agent confirm 1',
+    });
+    assert.match(checklistConfirmed.messages.map((message) => message.text).join('\n'), /immutable prompt/);
+    assert.equal(checklistConfirmed.meta?.systemAction, undefined);
+
+    const confirmed = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-1',
+      text: '/agent confirm 1',
+    });
+    assert.match(confirmed.messages.map((message) => message.text).join('\n'), /Agent 任务已.*排队/);
     assert.equal(confirmed.meta?.systemAction?.kind, 'run_agent_sweep');
 
     const [job] = runtime.services.agentJobs.listForScope({
@@ -7127,11 +7172,7 @@ test('/agent natural language list query uses the command skill instead of creat
       externalScopeId: 'wx-agent-natural-list-1',
       text: '/agent 写一份项目总结',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-natural-list-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-natural-list-1');
 
     const listed = await runtime.services.bridgeCoordinator.handleInboundEvent({
       platform: 'weixin',
@@ -7283,11 +7324,7 @@ test('/agent natural language proposes and confirms existing job management oper
       externalScopeId: 'wx-agent-natural-manage-1',
       text: '/agent 写一份项目总结',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-natural-manage-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-natural-manage-1');
 
     const updateDraft = await runtime.services.bridgeCoordinator.handleInboundEvent({
       platform: 'weixin',
@@ -7443,11 +7480,7 @@ test('/agent natural language rejects malformed update patch enums instead of si
       externalScopeId: 'wx-agent-invalid-update-1',
       text: '/agent 写一份项目总结',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-invalid-update-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-invalid-update-1');
 
     const rejected = await runtime.services.bridgeCoordinator.handleInboundEvent({
       platform: 'weixin',
@@ -7556,11 +7589,7 @@ test('/agent natural language can show, export, and resend existing job outputs'
       externalScopeId: 'wx-agent-natural-output-1',
       text: '/agent 生成报告',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-natural-output-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-natural-output-1');
     const [job] = runtime.services.agentJobs.listForScope({
       platform: 'weixin',
       externalScopeId: 'wx-agent-natural-output-1',
@@ -7658,11 +7687,7 @@ test('/agent stores generated attachments and can resend them', async () => {
       externalScopeId: 'wx-agent-artifacts-1',
       text: '/agent 生成一份 Word 报告发给我',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-artifacts-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-artifacts-1');
     const [job] = runtime.services.agentJobs.listForScope({
       platform: 'weixin',
       externalScopeId: 'wx-agent-artifacts-1',
@@ -7731,11 +7756,7 @@ test('/agent show, retry, rename, stop, and delete manage queued jobs', async ()
       externalScopeId: 'wx-agent-2',
       text: '/agent 写一份项目总结',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-2',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-2');
     const show = await runtime.services.bridgeCoordinator.handleInboundEvent({
       platform: 'weixin',
       externalScopeId: 'wx-agent-2',
@@ -7791,11 +7812,7 @@ test('/agent list, show, result, stop, and retry prefer Mission Control runtime 
       externalScopeId: 'wx-agent-mission-state-1',
       text: '/agent 汇总当前修复进展并给出最终结论',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-mission-state-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-mission-state-1');
 
     const [job] = runtime.services.agentJobs.listForScope({
       platform: 'weixin',
@@ -8018,11 +8035,7 @@ test('/agent runAgentJob retries after an interrupted provider turn and complete
       externalScopeId: 'wx-agent-interrupted-1',
       text: '/agent 检查当前项目测试并修复失败项',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-interrupted-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-interrupted-1');
     const [job] = runtime.services.agentJobs.listForScope({
       platform: 'weixin',
       externalScopeId: 'wx-agent-interrupted-1',
@@ -8095,11 +8108,7 @@ test('/agent runAgentJob continues the same attempt after a normal partial provi
       externalScopeId: 'wx-agent-continuation-1',
       text: '/agent 检查当前项目测试并修复失败项',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-continuation-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-continuation-1');
     const [job] = runtime.services.agentJobs.listForScope({
       platform: 'weixin',
       externalScopeId: 'wx-agent-continuation-1',
@@ -8188,11 +8197,7 @@ Stop and hand off when you need human approval.
       externalScopeId: 'wx-agent-workflow-1',
       text: '/agent 检查当前项目测试并修复失败项',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-workflow-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-workflow-1');
     const [job] = runtime.services.agentJobs.listForScope({
       platform: 'weixin',
       externalScopeId: 'wx-agent-workflow-1',
@@ -8244,11 +8249,7 @@ test('/agent runAgentJob forwards provider approval requests to the supplied app
       externalScopeId: 'wx-agent-approval-1',
       text: '/agent 检查当前项目测试并修复失败项',
     });
-    await runtime.services.bridgeCoordinator.handleInboundEvent({
-      platform: 'weixin',
-      externalScopeId: 'wx-agent-approval-1',
-      text: '/agent confirm',
-    });
+    await fullyConfirmLatestAgentJob(runtime, 'wx-agent-approval-1');
     const [job] = runtime.services.agentJobs.listForScope({
       platform: 'weixin',
       externalScopeId: 'wx-agent-approval-1',

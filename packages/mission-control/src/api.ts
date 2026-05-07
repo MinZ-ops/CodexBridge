@@ -10,6 +10,7 @@ import {
   materializeMissionStop,
   shouldMissionStopImmediately,
 } from './control_actions.js';
+import { transitionMission } from './state_machine.js';
 import {
   getActiveChecklistItem,
   getLatestMissionCycleResult,
@@ -57,6 +58,7 @@ import type {
   MissionAttemptsView,
   MissionTimelineEntry,
   MissionTimelineView,
+  StartMissionInput,
   ResumeMissionInput,
   RetryMissionInput,
   SyncMissionSourceInput,
@@ -98,6 +100,7 @@ export class DirectMissionControlApi implements MissionControlApi {
     this.workflowLoader = workflowLoader;
     this.commands = {
       createMission: (request) => this.handleCreateMission(request),
+      startMission: (request) => this.handleStartMission(request),
       syncMissionSource: (request) => this.handleSyncMissionSource(request),
       retryMission: (request) => this.handleRetryMission(request),
       resumeMission: (request) => this.handleResumeMission(request),
@@ -264,6 +267,42 @@ export class DirectMissionControlApi implements MissionControlApi {
       metadata: buildActorMetadata(request.input.actor),
     }));
     return withMeta(request.meta, this.buildMissionDetailView(retried.mission));
+  }
+
+  private handleStartMission(
+    request: MissionControlRequest<StartMissionInput>,
+  ): MissionControlResponse<MissionDetailView> {
+    const mission = this.requireMission(request.input.missionId);
+    if (
+      mission.status !== 'draft'
+      && mission.status !== 'awaiting_checklist_confirm'
+      && mission.status !== 'awaiting_prompt_confirm'
+    ) {
+      return withMeta(request.meta, this.buildMissionDetailView(mission));
+    }
+    const staged = advanceMissionStartGate(this.repository, mission, {
+      at: this.now(),
+      requestId: request.meta.requestId,
+      confirmChecklist: request.input.confirmChecklist === true,
+      confirmPrompt: request.input.confirmPrompt === true,
+    });
+    this.repository.saveMission(staged.mission);
+    this.repository.appendEvent(this.createMissionEvent({
+      mission: staged.mission,
+      attemptId: null,
+      kind: staged.eventKind,
+      summary: staged.summary,
+      metadata: {
+        requestId: request.meta.requestId,
+        checklistSnapshotId: staged.mission.currentChecklistSnapshotId,
+        checklistSnapshotVersion: staged.mission.currentChecklistSnapshotVersion,
+        checklistHash: staged.checklistSnapshot?.hash ?? null,
+        confirmChecklist: request.input.confirmChecklist === true,
+        confirmPrompt: request.input.confirmPrompt === true,
+        ...buildActorMetadata(request.input.actor),
+      },
+    }));
+    return withMeta(request.meta, this.buildMissionDetailView(staged.mission));
   }
 
   private handleSyncMissionSource(
@@ -753,6 +792,7 @@ function buildMissionChecklistStatusView(
 function buildActorMetadata(
   actor:
     | CreateMissionCommandInput['actor']
+    | StartMissionInput['actor']
     | SyncMissionSourceInput['actor']
     | RetryMissionInput['actor']
     | ResumeMissionInput['actor']
@@ -806,7 +846,12 @@ function buildMissionSourceSummary(
 
 function canSyncMissionSource(repository: MissionRepository, mission: Mission): boolean {
   return (
-    (mission.status === 'draft' || mission.status === 'queued')
+    (
+      mission.status === 'draft'
+      || mission.status === 'awaiting_checklist_confirm'
+      || mission.status === 'awaiting_prompt_confirm'
+      || mission.status === 'queued'
+    )
     && mission.activeAttemptId === null
     && mission.stopRequest === null
     && mission.attemptCount === 0
@@ -846,6 +891,8 @@ function shouldReplaceMissionOnCreate(
     && repository.listAttempts(mission.id).length === 0
     && repository.listEvents(mission.id).length === 0
     && repository.listPlanChangeRequests(mission.id).length === 0
+    && mission.status !== 'awaiting_checklist_confirm'
+    && mission.status !== 'awaiting_prompt_confirm'
     && mission.status !== 'running'
     && mission.status !== 'verifying'
     && mission.status !== 'repairing'
@@ -914,5 +961,133 @@ function withMeta<TData>(
       idempotencyKey: meta.idempotencyKey ?? null,
     },
     data,
+  };
+}
+
+function advanceMissionStartGate(
+  repository: MissionRepository,
+  mission: Mission,
+  options: {
+    at: number;
+    requestId: string;
+    confirmChecklist: boolean;
+    confirmPrompt: boolean;
+  },
+): {
+  mission: Mission;
+  checklistSnapshot: ChecklistSnapshot | null;
+  eventKind: MissionEvent['kind'];
+  summary: string;
+} {
+  if (
+    mission.status === 'queued'
+    || mission.status === 'planning'
+    || mission.status === 'running'
+    || mission.status === 'verifying'
+    || mission.status === 'repairing'
+    || mission.status === 'waiting_user'
+    || mission.status === 'needs_human'
+    || mission.status === 'handoff'
+    || mission.status === 'blocked'
+    || mission.status === 'completed'
+    || mission.status === 'failed'
+    || mission.status === 'stopped'
+    || mission.status === 'archived'
+  ) {
+    return {
+      mission,
+      checklistSnapshot: repository.getChecklistSnapshotById(mission.currentChecklistSnapshotId),
+      eventKind: 'mission.queued',
+      summary: mission.statusReason ?? 'Mission start gate already resolved.',
+    };
+  }
+
+  const checklistSnapshot = repository.getChecklistSnapshotById(mission.currentChecklistSnapshotId);
+  const hasChecklist = Boolean(checklistSnapshot && checklistSnapshot.items.length > 0);
+  const checklistConfirmed = !hasChecklist
+    || mission.status === 'awaiting_prompt_confirm'
+    || options.confirmChecklist;
+
+  if (!checklistConfirmed) {
+    return {
+      mission: transitionMission(mission, 'awaiting_checklist_confirm', {
+        at: options.at,
+        reason: 'Waiting for the initial checklist snapshot to be confirmed before the first autonomous cycle.',
+        pendingApproval: buildChecklistConfirmationApproval(options.requestId, options.at),
+      }),
+      checklistSnapshot,
+      eventKind: 'mission.awaiting_checklist_confirm',
+      summary: 'Waiting for checklist confirmation before the first autonomous cycle.',
+    };
+  }
+
+  if (!options.confirmPrompt) {
+    const awaitingPrompt = mission.status === 'awaiting_prompt_confirm'
+      ? {
+        ...mission,
+        statusReason: 'Waiting for the immutable prompt to be confirmed before the first autonomous cycle.',
+        pendingApproval: buildPromptConfirmationApproval(options.requestId, options.at),
+        updatedAt: options.at,
+      }
+      : transitionMission(mission, 'awaiting_prompt_confirm', {
+        at: options.at,
+        reason: 'Waiting for the immutable prompt to be confirmed before the first autonomous cycle.',
+        pendingApproval: buildPromptConfirmationApproval(options.requestId, options.at),
+      });
+    return {
+      mission: awaitingPrompt,
+      checklistSnapshot,
+      eventKind: 'mission.awaiting_prompt_confirm',
+      summary: 'Waiting for immutable prompt confirmation before the first autonomous cycle.',
+    };
+  }
+
+  return {
+    mission: transitionMission(mission, 'queued', {
+      at: options.at,
+      reason: 'Mission queued after checklist and immutable prompt confirmation.',
+      pendingApproval: null,
+    }),
+    checklistSnapshot,
+    eventKind: 'mission.queued',
+    summary: 'Mission queued after checklist and immutable prompt confirmation.',
+  };
+}
+
+function buildChecklistConfirmationApproval(
+  requestId: string,
+  at: number,
+): MissionPendingApproval {
+  return {
+    requestId,
+    kind: 'workflow',
+    summary: 'Confirm the initial checklist snapshot before the first autonomous cycle.',
+    options: [
+      {
+        index: 1,
+        label: 'Confirm checklist',
+        description: 'Approve the initial checklist snapshot for autonomous execution.',
+      },
+    ],
+    createdAt: at,
+  };
+}
+
+function buildPromptConfirmationApproval(
+  requestId: string,
+  at: number,
+): MissionPendingApproval {
+  return {
+    requestId,
+    kind: 'workflow',
+    summary: 'Confirm the immutable prompt before the first autonomous cycle.',
+    options: [
+      {
+        index: 1,
+        label: 'Confirm prompt',
+        description: 'Approve the immutable prompt that will be used for autonomous execution.',
+      },
+    ],
+    createdAt: at,
   };
 }

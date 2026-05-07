@@ -224,6 +224,27 @@ export class AgentJobService {
     return this.requireById(job.id);
   }
 
+  startJob(id: string, params: {
+    confirmChecklist?: boolean | null;
+    confirmPrompt?: boolean | null;
+  } = {}): AgentJob {
+    this.requireById(id);
+    this.ensureMissionRecord(id);
+    this.createMissionControlApi().commands.startMission({
+      meta: this.createMissionControlMeta(`agent-start:${id}`),
+      input: {
+        missionId: id,
+        confirmChecklist: params.confirmChecklist ?? null,
+        confirmPrompt: params.confirmPrompt ?? null,
+        actor: {
+          actorId: 'agent-job-service',
+          actorType: 'host',
+        },
+      },
+    });
+    return this.requireById(id);
+  }
+
   updateJob(id: string, updates: Partial<AgentJob>): AgentJob {
     const current = this.requireById(id);
     const next: AgentJob = {
@@ -598,8 +619,8 @@ export class AgentJobService {
         codexThreadId: this.getSession(job)?.codexThreadId ?? null,
         maxAttempts: job.maxAttempts,
         maxTurns: 8,
-        initialStatus: 'queued',
-        reason: 'Agent mission queued through the bridge adapter.',
+        initialStatus: 'draft',
+        reason: 'Agent mission drafted through the bridge adapter.',
         actor: {
           actorId: 'agent-job-service',
           actorType: 'host',
@@ -826,7 +847,9 @@ function appendAttemptHistoryEntry(
 function normalizeAgentJobStatus(value: unknown): AgentJobStatus {
   const normalized = String(value ?? '').trim().toLowerCase();
   if (
-    normalized === 'queued'
+    normalized === 'awaiting_checklist_confirm'
+    || normalized === 'awaiting_prompt_confirm'
+    || normalized === 'queued'
     || normalized === 'planning'
     || normalized === 'running'
     || normalized === 'verifying'

@@ -183,7 +183,10 @@ function buildAttemptHistory(attempts: MissionAttempt[]): AgentJobAttemptHistory
 function mapMissionStatusToAgentJobStatus(status: MissionStatus): AgentJobStatus {
   switch (status) {
     case 'draft':
-      return 'queued';
+    case 'awaiting_checklist_confirm':
+      return 'awaiting_checklist_confirm';
+    case 'awaiting_prompt_confirm':
+      return 'awaiting_prompt_confirm';
     case 'queued':
     case 'planning':
     case 'running':

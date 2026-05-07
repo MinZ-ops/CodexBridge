@@ -20,6 +20,8 @@ const RETRY_REUSE_CONTEXT_STATUS_SET = new Set<Mission['status']>([
 
 const IMMEDIATE_STOP_STATUS_SET = new Set<Mission['status']>([
   'draft',
+  'awaiting_checklist_confirm',
+  'awaiting_prompt_confirm',
   'queued',
   'waiting_user',
   'needs_human',
@@ -29,6 +31,8 @@ const IMMEDIATE_STOP_STATUS_SET = new Set<Mission['status']>([
 
 const STOP_REQUESTABLE_STATUS_SET = new Set<Mission['status']>([
   'draft',
+  'awaiting_checklist_confirm',
+  'awaiting_prompt_confirm',
   'queued',
   'planning',
   'running',

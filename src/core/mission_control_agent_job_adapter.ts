@@ -628,7 +628,10 @@ function mapAgentStatusToMissionStatus(status: AgentJobStatus, running: boolean)
 function mapMissionStatusToAgentJobStatus(status: MissionStatus): AgentJobStatus {
   switch (status) {
     case 'draft':
-      return 'queued';
+    case 'awaiting_checklist_confirm':
+      return 'awaiting_checklist_confirm';
+    case 'awaiting_prompt_confirm':
+      return 'awaiting_prompt_confirm';
     case 'queued':
     case 'planning':
     case 'running':
@@ -714,6 +717,9 @@ function normalizeLocalePrefix(locale: string | null): string {
 
 function mapAgentStatusToMissionAttemptStatus(status: AgentJobStatus): MissionAttemptStatus {
   switch (status) {
+    case 'awaiting_checklist_confirm':
+    case 'awaiting_prompt_confirm':
+      return 'queued';
     case 'planning':
       return 'queued';
     case 'running':

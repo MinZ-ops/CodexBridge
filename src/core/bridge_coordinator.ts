@@ -405,6 +405,12 @@ type AgentTargetResolution =
   | { status: 'ambiguous'; value: string; candidates: Array<{ job: AgentJob; index: number }> }
   | { status: 'not_found'; value: string };
 
+type AgentStartConfirmationResolution =
+  | { status: 'found'; job: AgentJob; index: number }
+  | { status: 'ambiguous'; candidates: Array<{ job: AgentJob; index: number }> }
+  | { status: 'not_found'; value: string }
+  | { status: 'none_pending' };
+
 type AgentJobPatch = {
   title?: string;
   goal?: string;
@@ -5828,7 +5834,7 @@ export class BridgeCoordinator {
       return this.handleAgentListCommand(event);
     }
     if (['confirm', 'c'].includes(subcommand)) {
-      return this.handleAgentConfirmCommand(event);
+      return this.handleAgentConfirmCommand(event, normalizedArgs[1] ?? '');
     }
     if (['edit'].includes(subcommand)) {
       return this.handleAgentEditCommand(event);
@@ -5890,7 +5896,7 @@ export class BridgeCoordinator {
     return this.renderAgentDraftResponse(event, draft);
   }
 
-  async handleAgentConfirmCommand(event) {
+  async handleAgentConfirmCommand(event, token = '') {
     const activeResponse = await this.rejectIfActiveTurnForCommand(event, 'agent');
     if (activeResponse) {
       return activeResponse;
@@ -5898,9 +5904,29 @@ export class BridgeCoordinator {
     const scopeRef = toScopeRef(event);
     const operation = this.getPendingAgentOperation(scopeRef);
     if (!operation) {
-      return messageResponse([
-        this.t('coordinator.agent.noDraft'),
-      ], this.buildScopedSessionMeta(event));
+      const resolved = this.resolveAgentStartConfirmation(event, token);
+      if (resolved.status === 'none_pending') {
+        return messageResponse([
+          this.t('coordinator.agent.noStartConfirmation'),
+        ], this.buildScopedSessionMeta(event));
+      }
+      if (resolved.status === 'ambiguous') {
+        return this.renderAgentClarifyResponse(
+          event,
+          this.t('coordinator.agent.confirmSelect'),
+          resolved.candidates.map((candidate) => ({
+            index: candidate.index,
+            title: candidate.job.title,
+            status: formatAgentStatusLabel(candidate.job.status, candidate.job.running, this.currentI18n),
+          })),
+        );
+      }
+      if (resolved.status === 'not_found') {
+        return messageResponse([
+          this.t('coordinator.agent.notFound', { value: resolved.value || '?' }),
+        ], this.buildScopedSessionMeta(event));
+      }
+      return this.confirmAgentStartMission(event, resolved.job, resolved.index);
     }
     if (operation.kind !== 'draft') {
       return this.confirmAgentOperation(event, scopeRef, operation);
@@ -5940,21 +5966,9 @@ export class BridgeCoordinator {
       maxAttempts: 2,
     });
     this.clearPendingAgentDraft(scopeRef);
-    const response = messageResponse([
-      this.t('coordinator.agent.created'),
-      this.t('coordinator.agent.title', { value: job.title }),
-      this.t('coordinator.agent.mode', { value: formatAgentMode(job.mode, this.currentI18n) }),
-      this.t('coordinator.agent.status', { value: formatAgentStatusLabel(job.status, job.running, this.currentI18n) }),
-      this.t('coordinator.agent.deliveryTarget'),
-      this.t('coordinator.agent.showHint', { index: this.agentJobs.listForScope(scopeRef).length }),
-    ], this.buildScopedSessionMeta(event));
-    response.meta = {
-      ...(response.meta ?? {}),
-      systemAction: {
-        kind: 'run_agent_sweep',
-      },
-    };
-    return response;
+    const created = this.agentJobs.startJob(job.id);
+    const index = this.agentJobs.listForScope(scopeRef).findIndex((entry) => entry.id === created.id) + 1;
+    return this.renderAgentMissionStartResponse(event, created, index, { created: true });
   }
 
   async handleAgentEditCommand(event) {
@@ -6110,6 +6124,9 @@ export class BridgeCoordinator {
       lines.push(this.t('coordinator.agent.currentChecklistItem', {
         value: detail.checklistStatus.currentItem.title,
       }));
+    }
+    if (isAgentMissionAwaitingStartStatus(detail.mission.status)) {
+      lines.push(...this.buildAgentStartGateLines(detail, resolved.index ?? job.id));
     }
     if (missionStatusView.summary) {
       lines.push(this.t('coordinator.agent.workpadSummary', { value: missionStatusView.summary }));
@@ -6856,6 +6873,156 @@ export class BridgeCoordinator {
 
   clearPendingAgentDraft(scopeRef: PlatformScopeRef): void {
     this.pendingAgentDraftsByScope.delete(formatPlatformScopeKey(scopeRef.platform, scopeRef.externalScopeId));
+  }
+
+  resolveAgentStartConfirmation(event, token = ''): AgentStartConfirmationResolution {
+    const normalized = String(token ?? '').trim();
+    if (normalized) {
+      const resolved = this.resolveAgentJobForScope(event, normalized);
+      if (!resolved) {
+        return {
+          status: 'not_found',
+          value: normalized,
+        };
+      }
+      const detail = this.agentJobs.getMissionDetail(resolved.job.id);
+      if (!detail || !isAgentMissionAwaitingStartStatus(detail.mission.status)) {
+        return {
+          status: 'none_pending',
+        };
+      }
+      return {
+        status: 'found',
+        job: resolved.job,
+        index: resolved.index ?? 1,
+      };
+    }
+    const scopeRef = toScopeRef(event);
+    const candidates = this.agentJobs
+      .listMissionSummariesForScope(scopeRef)
+      .map((summary, index) => ({
+        summary,
+        index: index + 1,
+        job: this.agentJobs.getById(summary.mission.id),
+      }))
+      .filter((candidate): candidate is { summary: any; index: number; job: AgentJob } =>
+        Boolean(candidate.job) && isAgentMissionAwaitingStartStatus(candidate.summary.mission.status))
+      .map((candidate) => ({
+        job: candidate.job,
+        index: candidate.index,
+      }));
+    if (candidates.length === 0) {
+      return {
+        status: 'none_pending',
+      };
+    }
+    if (candidates.length === 1) {
+      return {
+        status: 'found',
+        job: candidates[0].job,
+        index: candidates[0].index,
+      };
+    }
+    return {
+      status: 'ambiguous',
+      candidates,
+    };
+  }
+
+  confirmAgentStartMission(event, job: AgentJob, index: number) {
+    const detail = this.agentJobs.getMissionDetail(job.id);
+    if (!detail) {
+      return messageResponse([
+        this.t('coordinator.agent.notFound', { value: String(index) }),
+      ], this.buildScopedSessionMeta(event));
+    }
+    let updated = job;
+    if (detail.mission.status === 'draft') {
+      updated = this.agentJobs.startJob(job.id);
+    } else if (detail.mission.status === 'awaiting_checklist_confirm') {
+      updated = this.agentJobs.startJob(job.id, {
+        confirmChecklist: true,
+      });
+    } else if (detail.mission.status === 'awaiting_prompt_confirm') {
+      updated = this.agentJobs.startJob(job.id, {
+        confirmPrompt: true,
+      });
+    } else {
+      return messageResponse([
+        this.t('coordinator.agent.noStartConfirmation'),
+      ], this.buildScopedSessionMeta(event));
+    }
+    return this.renderAgentMissionStartResponse(event, updated, index, {
+      created: false,
+    });
+  }
+
+  renderAgentMissionStartResponse(event, job: AgentJob, index: number, options: { created: boolean }) {
+    const detail = this.agentJobs.getMissionDetail(job.id);
+    if (!detail) {
+      return messageResponse([
+        this.t('coordinator.agent.notFound', { value: String(index) }),
+      ], this.buildScopedSessionMeta(event));
+    }
+    if (detail.mission.status === 'queued') {
+      const response = messageResponse([
+        this.t(options.created ? 'coordinator.agent.createdQueuedAfterConfirm' : 'coordinator.agent.startQueued'),
+        this.t('coordinator.agent.title', { value: detail.mission.title }),
+        this.t('coordinator.agent.mode', { value: formatAgentMode(job.mode, this.currentI18n) }),
+        this.t('coordinator.agent.status', {
+          value: formatAgentStatusLabel(job.status, job.running, this.currentI18n),
+        }),
+        this.t('coordinator.agent.deliveryTarget'),
+        this.t('coordinator.agent.showHint', { index }),
+      ], this.buildScopedSessionMeta(event));
+      response.meta = {
+        ...(response.meta ?? {}),
+        systemAction: {
+          kind: 'run_agent_sweep',
+        },
+      };
+      return response;
+    }
+
+    const lines = [
+      this.t(options.created ? 'coordinator.agent.createdPendingStart' : 'coordinator.agent.startStepConfirmed'),
+      this.t('coordinator.agent.title', { value: detail.mission.title }),
+      this.t('coordinator.agent.mode', { value: formatAgentMode(job.mode, this.currentI18n) }),
+      this.t('coordinator.agent.status', {
+        value: formatAgentStatusLabel(detail.mission.status, false, this.currentI18n),
+      }),
+      ...this.buildAgentStartGateLines(detail, index),
+      this.t('coordinator.agent.showHint', { index }),
+    ];
+    return messageResponse(lines, this.buildScopedSessionMeta(event));
+  }
+
+  buildAgentStartGateLines(detail, index) {
+    const commandToken = String(index ?? detail.mission.id);
+    if (detail.mission.status === 'awaiting_checklist_confirm') {
+      const lines = [
+        this.t('coordinator.agent.checklistConfirmTitle'),
+        this.t('coordinator.agent.expectedOutput', { value: detail.mission.expectedOutput }),
+      ];
+      if (detail.currentChecklistSnapshot?.acceptanceCriteria?.length) {
+        lines.push(this.t('coordinator.agent.acceptanceCriteriaTitle'));
+        lines.push(...detail.currentChecklistSnapshot.acceptanceCriteria.map((criterion, criterionIndex) => `${criterionIndex + 1}. ${criterion}`));
+      }
+      if (detail.currentChecklistSnapshot?.plan?.length) {
+        lines.push(this.t('coordinator.agent.planTitle'));
+        lines.push(...detail.currentChecklistSnapshot.plan.map((line, planIndex) => `${planIndex + 1}. ${line}`));
+      }
+      lines.push(this.t('coordinator.agent.confirmJobHint', { index: commandToken }));
+      return lines;
+    }
+    if (detail.mission.status === 'awaiting_prompt_confirm') {
+      return [
+        this.t('coordinator.agent.promptConfirmTitle'),
+        detail.mission.immutablePrompt,
+        this.t('coordinator.agent.confirmJobHint', { index: commandToken }),
+      ];
+    }
+    return [];
   }
 
   resolveAgentJobForScope(event, token) {
@@ -13396,6 +13563,11 @@ function isActiveMissionJobStatus(status: string): boolean {
     || status === 'repairing';
 }
 
+function isAgentMissionAwaitingStartStatus(status: string): boolean {
+  return status === 'awaiting_checklist_confirm'
+    || status === 'awaiting_prompt_confirm';
+}
+
 function formatAgentStatusLabel(status: string, running: boolean, i18n: Translator): string {
   if (running) {
     return i18n.t('coordinator.agent.status.running');
@@ -14721,6 +14893,8 @@ function formatAutomationStatusLabel(status: string, running: boolean, i18n: Tra
 
 function formatMissionRuntimeStatusLabel(status: string, i18n: Translator): string {
   switch (status) {
+    case 'awaiting_checklist_confirm':
+    case 'awaiting_prompt_confirm':
     case 'queued':
     case 'planning':
     case 'running':
