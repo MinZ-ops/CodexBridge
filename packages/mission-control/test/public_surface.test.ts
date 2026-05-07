@@ -11,12 +11,13 @@ import {
 
 test('mission control package exposes the package boundary contract', () => {
   assert.equal(MISSION_CONTROL_PACKAGE_NAME, '@codexbridge/mission-control');
-  assert.equal(MISSION_CONTROL_PACKAGE_PHASE, 'phase-9a-source-and-progress-foundations');
+  assert.equal(MISSION_CONTROL_PACKAGE_PHASE, 'phase-9b-manual-source-backed-mission-creation');
   assert.equal(MISSION_CYCLE_RESULT_SCHEMA_VERSION, 'mission-cycle/v1');
   assert.ok(MISSION_CONTROL_OWNS.includes('mission-domain-model'));
   assert.ok(MISSION_CONTROL_OWNS.includes('provider-abstraction'));
   assert.ok(MISSION_CONTROL_OWNS.includes('host-adapter-contract'));
   assert.ok(MISSION_CONTROL_OWNS.includes('work-item-source-contract'));
+  assert.ok(MISSION_CONTROL_OWNS.includes('source-backed-mission-creation'));
   assert.ok(MISSION_CONTROL_OWNS.includes('progress-sink-contract'));
   assert.ok(MISSION_CONTROL_DOES_NOT_OWN.includes('wechat-transport'));
   assert.ok(MISSION_CONTROL_DOES_NOT_OWN.includes('assistant-records'));

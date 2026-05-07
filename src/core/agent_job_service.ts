@@ -1,6 +1,7 @@
 import crypto from 'node:crypto';
 import {
   canTransitionMissionStatus,
+  createManualWorkItemSourceSummary,
   DirectMissionControlApi,
   transitionMission,
   type Mission,
@@ -212,7 +213,7 @@ export class AgentJobService {
       updatedAt: now,
     };
     this.agentJobs.save(job);
-    this.ensureMissionRecord(job.id);
+    this.seedMissionFromManualWorkItem(job);
     return this.requireById(job.id);
   }
 
@@ -522,6 +523,45 @@ export class AgentJobService {
     for (const job of jobs) {
       this.ensureMissionRecord(job.id);
     }
+  }
+
+  private seedMissionFromManualWorkItem(job: AgentJob): void {
+    this.createMissionControlApi().commands.createMission({
+      meta: this.createMissionControlMeta(`agent-create:${job.id}`),
+      input: {
+        missionId: job.id,
+        workItem: createManualWorkItemSourceSummary({
+          source: 'manual',
+          sourceRef: job.id,
+          title: job.title,
+          goal: job.goal,
+          expectedOutput: job.expectedOutput,
+          acceptanceCriteria: job.expectedOutput ? [job.expectedOutput] : [],
+          plan: [...job.plan],
+          metadata: {
+            category: job.category,
+            mode: job.mode,
+            originalInput: job.originalInput,
+          },
+        }),
+        platform: job.platform,
+        externalScopeId: job.externalScopeId,
+        providerProfileId: job.providerProfileId,
+        riskLevel: job.riskLevel,
+        cwd: job.cwd,
+        workflowPath: job.missionWorkflowPath,
+        bridgeSessionId: job.bridgeSessionId,
+        codexThreadId: this.getSession(job)?.codexThreadId ?? null,
+        maxAttempts: job.maxAttempts,
+        maxTurns: 8,
+        initialStatus: 'queued',
+        reason: 'Agent mission queued through the bridge adapter.',
+        actor: {
+          actorId: 'agent-job-service',
+          actorType: 'host',
+        },
+      },
+    });
   }
 
   private reconcileAuthoritativeMissionFromProjection(

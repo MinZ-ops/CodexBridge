@@ -36,15 +36,18 @@ It must not own bridge behavior:
 
 Current phase:
 
-- `phase-9a-source-and-progress-foundations`: package-owned mission
+- `phase-9b-manual-source-backed-mission-creation`: package-owned mission
   domain/workflow/workspace/provider/verifier/runtime foundations, first-class
   `WorkItem` / `ChecklistSnapshot` / `PlanChangeRequest` /
   `MissionGeneration` lineage, direct in-process `commands / queries / streams`
   API contracts for `/agent`, a typed `CycleResult` loop protocol persisted on
   mission events, an explicit host-adapter contract for session/thread
   binding plus approval/artifact/notification handoff, a first
-  `WorkItemSourceAdapter` contract, and a repository-backed progress sink that
-  lets providers/hosts append workpad progress without mutating lifecycle truth
+  `WorkItemSourceAdapter` contract, a package-owned create path that turns
+  normalized manual source summaries into authoritative
+  `WorkItem + Mission + Generation + ChecklistSnapshot` records, and a
+  repository-backed progress sink that lets providers/hosts append workpad
+  progress without mutating lifecycle truth
 
 This package should preserve the Symphony-style separation between:
 

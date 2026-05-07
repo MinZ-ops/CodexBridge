@@ -4,13 +4,17 @@ import type {
   MissionAttempt,
   MissionEvent,
   MissionGeneration,
+  MissionLoopPolicy,
   MissionPendingApproval,
+  MissionPriority,
+  MissionRiskLevel,
   MissionSource,
   MissionStatus,
   PlanChangeRequest,
   WorkItem,
 } from './types.js';
 import type { MissionCycleResult } from './cycle_result.js';
+import type { WorkItemSourceSummary } from './source.js';
 
 export interface MissionControlBoundaryMetadata {
   requestId: string;
@@ -166,6 +170,29 @@ export interface RetryMissionInput {
   actor?: MissionControlActor | null;
 }
 
+export interface CreateMissionCommandInput {
+  missionId: string;
+  workItem: WorkItemSourceSummary;
+  platform: string;
+  externalScopeId: string;
+  providerProfileId: string;
+  loopPolicy?: Partial<MissionLoopPolicy> | null;
+  priority?: MissionPriority;
+  riskLevel?: MissionRiskLevel;
+  cwd?: string | null;
+  workspacePath?: string | null;
+  workflowPath?: string | null;
+  bridgeSessionId?: string | null;
+  codexThreadId?: string | null;
+  immutableGoal?: string | null;
+  immutablePrompt?: string | null;
+  maxAttempts?: number | null;
+  maxTurns?: number | null;
+  initialStatus?: 'draft' | 'queued';
+  reason?: string | null;
+  actor?: MissionControlActor | null;
+}
+
 export interface ResumeMissionInput {
   missionId: string;
   reason?: string | null;
@@ -194,6 +221,9 @@ export type MissionStreamFrame =
   };
 
 export interface MissionControlCommands {
+  createMission(
+    request: MissionControlRequest<CreateMissionCommandInput>,
+  ): MissionControlResponse<MissionDetailView>;
   retryMission(
     request: MissionControlRequest<RetryMissionInput>,
   ): MissionControlResponse<MissionDetailView>;

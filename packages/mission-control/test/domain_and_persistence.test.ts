@@ -17,7 +17,7 @@ import {
 import type { MissionAttempt, MissionEvent } from '../src/index.js';
 
 test('mission control package exposes the current Mission Control phase marker', () => {
-  assert.equal(MISSION_CONTROL_PACKAGE_PHASE, 'phase-9a-source-and-progress-foundations');
+  assert.equal(MISSION_CONTROL_PACKAGE_PHASE, 'phase-9b-manual-source-backed-mission-creation');
 });
 
 test('mission state transitions are explicit and reject invalid transitions', () => {

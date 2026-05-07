@@ -57,6 +57,99 @@ function createApiHarness(now = 1_701_200_000_000) {
   return { repo, api, nowRef };
 }
 
+test('direct mission control api can create a queued mission from a source-backed work item summary', async () => {
+  const { repo, api, nowRef } = createApiHarness(1_701_200_050_000);
+
+  const created = await api.commands.createMission({
+    meta: {
+      requestId: 'req-create-1',
+      correlationId: 'corr-create-1',
+      idempotencyKey: 'idem-create-1',
+    },
+    input: {
+      missionId: 'mission-api-create-1',
+      workItem: {
+        source: 'manual',
+        sourceRef: 'manual:api-create-1',
+        sourceRevision: 'manual-rev-1',
+        title: 'Repair the preview timeout',
+        goal: 'Repair the preview timeout without regressing the chat flow.',
+        expectedOutput: 'A verified repair summary.',
+        acceptanceCriteria: ['Patch exists', 'Targeted test passes'],
+        plan: ['Inspect the timeout path', 'Patch the flaky branch', 'Verify the fix'],
+        metadata: {
+          category: 'code',
+        },
+      },
+      platform: 'weixin',
+      externalScopeId: 'wx-user-create-1',
+      providerProfileId: 'codex-default',
+      bridgeSessionId: 'session-api-create-1',
+      codexThreadId: 'thread-api-create-1',
+      cwd: '/repo',
+      riskLevel: 'medium',
+      maxAttempts: 3,
+      maxTurns: 8,
+      initialStatus: 'queued',
+      reason: 'Mission queued from the manual work item source.',
+      actor: {
+        actorId: 'test-host',
+        actorType: 'host',
+      },
+    },
+  });
+
+  assert.equal(created.meta.requestId, 'req-create-1');
+  assert.equal(created.data.mission.status, 'queued');
+  assert.equal(created.data.mission.source, 'manual');
+  assert.equal(created.data.hostBindings.platform, 'weixin');
+  assert.equal(created.data.hostBindings.source, 'manual');
+  assert.equal(created.data.workItem?.sourceRevision, 'manual-rev-1');
+  assert.deepEqual(created.data.workItem?.metadata, { category: 'code' });
+  assert.equal(created.data.activeGeneration?.id, 'mission-api-create-1:generation:1');
+  assert.equal(created.data.currentChecklistSnapshot?.sourceRevision, 'manual-rev-1');
+  assert.deepEqual(
+    created.data.currentChecklistSnapshot?.acceptanceCriteria,
+    ['Patch exists', 'Targeted test passes'],
+  );
+
+  const events = repo.listEvents('mission-api-create-1');
+  assert.deepEqual(events.map((event) => event.kind), ['mission.created', 'mission.queued']);
+  assert.equal(events[0]?.metadata.sourceRef, 'manual:api-create-1');
+  assert.equal(events[1]?.summary, 'Mission queued from the manual work item source.');
+
+  const repeated = await api.commands.createMission({
+    meta: {
+      requestId: 'req-create-2',
+      correlationId: null,
+      idempotencyKey: 'idem-create-1',
+    },
+    input: {
+      missionId: 'mission-api-create-1',
+      workItem: {
+        source: 'manual',
+        sourceRef: 'manual:api-create-1',
+        sourceRevision: 'manual-rev-2',
+        title: 'Changed title should not overwrite the existing mission',
+        goal: 'Changed goal',
+        expectedOutput: 'Changed output',
+        acceptanceCriteria: ['Changed acceptance'],
+        plan: ['Changed plan'],
+        metadata: null,
+      },
+      platform: 'weixin',
+      externalScopeId: 'wx-user-create-1',
+      providerProfileId: 'codex-default',
+    },
+  });
+
+  assert.equal(repeated.data.mission.title, 'Repair the preview timeout');
+  assert.equal(repo.listEvents('mission-api-create-1').length, 2);
+  assert.equal(repo.getChecklistSnapshotById('mission-api-create-1:checklist:1')?.hash?.length, 64);
+  assert.deepEqual(events.map((event) => event.id), ['event-1701200050000', 'event-1701200050001']);
+  assert.equal(nowRef.value, 1_701_200_050_002);
+});
+
 test('direct mission control api exposes package-owned query views with boundary metadata', async () => {
   const { repo, api, nowRef } = createApiHarness();
   const queued = createQueuedMission(nowRef.value);

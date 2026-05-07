@@ -5,6 +5,7 @@ import {
 } from './domain_records.js';
 import { createMissionResumeSnapshot } from './control_actions.js';
 import { getLatestMissionCycleResult } from './cycle_result.js';
+import { createMissionAggregateFromSourceSummary } from './source_mission.js';
 import type { MissionRepository } from './repository.js';
 import { transitionMission } from './state_machine.js';
 import type {
@@ -14,6 +15,7 @@ import type {
   MissionPendingApproval,
 } from './types.js';
 import type {
+  CreateMissionCommandInput,
   GetMissionAttemptsInput,
   GetMissionDetailInput,
   GetMissionExecutionInput,
@@ -71,6 +73,7 @@ export class DirectMissionControlApi implements MissionControlApi {
     this.now = now;
     this.generateId = generateId;
     this.commands = {
+      createMission: (request) => this.handleCreateMission(request),
       retryMission: (request) => this.handleRetryMission(request),
       resumeMission: (request) => this.handleResumeMission(request),
       stopMission: (request) => this.handleStopMission(request),
@@ -140,6 +143,67 @@ export class DirectMissionControlApi implements MissionControlApi {
       return withMeta(request.meta, null);
     }
     return withMeta(request.meta, this.buildMissionExecutionView(mission));
+  }
+
+  private handleCreateMission(
+    request: MissionControlRequest<CreateMissionCommandInput>,
+  ): MissionControlResponse<MissionDetailView> {
+    const existing = this.repository.getMissionById(request.input.missionId);
+    if (existing && !shouldReplaceMissionOnCreate(this.repository, existing)) {
+      return withMeta(request.meta, this.buildMissionDetailView(existing));
+    }
+    const created = createMissionAggregateFromSourceSummary({
+      missionId: request.input.missionId,
+      workItem: request.input.workItem,
+      platform: request.input.platform,
+      externalScopeId: request.input.externalScopeId,
+      providerProfileId: request.input.providerProfileId,
+      loopPolicy: request.input.loopPolicy,
+      priority: request.input.priority,
+      riskLevel: request.input.riskLevel,
+      cwd: request.input.cwd,
+      workspacePath: request.input.workspacePath,
+      workflowPath: request.input.workflowPath,
+      bridgeSessionId: request.input.bridgeSessionId,
+      codexThreadId: request.input.codexThreadId,
+      immutableGoal: request.input.immutableGoal,
+      immutablePrompt: request.input.immutablePrompt,
+      maxAttempts: request.input.maxAttempts,
+      maxTurns: request.input.maxTurns,
+      initialStatus: request.input.initialStatus,
+      reason: request.input.reason,
+      now: this.now(),
+    });
+    if (existing) {
+      this.repository.resetMission(created.mission);
+    } else {
+      this.repository.saveMission(created.mission);
+    }
+    this.repository.saveWorkItem(created.workItem);
+    this.repository.saveGeneration(created.generation);
+    this.repository.saveChecklistSnapshot(created.checklistSnapshot);
+    this.repository.appendEvent(this.createMissionEvent({
+      mission: created.mission,
+      attemptId: null,
+      kind: 'mission.created',
+      summary: 'Mission created from a source-backed work item.',
+      metadata: {
+        source: created.mission.source,
+        sourceRef: created.mission.sourceRef,
+        sourceRevision: request.input.workItem.sourceRevision,
+        ...buildActorMetadata(request.input.actor),
+      },
+    }));
+    if (created.mission.status === 'queued') {
+      this.repository.appendEvent(this.createMissionEvent({
+        mission: created.mission,
+        attemptId: null,
+        kind: 'mission.queued',
+        summary: normalizeText(request.input.reason) ?? 'Mission queued from a source-backed work item.',
+        metadata: buildActorMetadata(request.input.actor),
+      }));
+    }
+    return withMeta(request.meta, this.buildMissionDetailView(created.mission));
   }
 
   private handleRetryMission(
@@ -431,7 +495,13 @@ function buildMissionArtifactRefs(resultArtifacts: unknown[]): MissionArtifactRe
     .filter((artifact) => artifact.path || artifact.name);
 }
 
-function buildActorMetadata(actor: RetryMissionInput['actor'] | ResumeMissionInput['actor'] | StopMissionInput['actor']): Record<string, unknown> {
+function buildActorMetadata(
+  actor:
+    | CreateMissionCommandInput['actor']
+    | RetryMissionInput['actor']
+    | ResumeMissionInput['actor']
+    | StopMissionInput['actor'],
+): Record<string, unknown> {
   if (!actor) {
     return {};
   }
@@ -472,6 +542,23 @@ function sortAttempts(attempts: MissionAttempt[]): MissionAttempt[] {
     }
     return left.index - right.index;
   });
+}
+
+function shouldReplaceMissionOnCreate(
+  repository: MissionRepository,
+  mission: Mission,
+): boolean {
+  return mission.attemptCount === 0
+    && repository.listAttempts(mission.id).length === 0
+    && repository.listEvents(mission.id).length === 0
+    && repository.listPlanChangeRequests(mission.id).length === 0
+    && mission.status !== 'running'
+    && mission.status !== 'verifying'
+    && mission.status !== 'repairing'
+    && mission.status !== 'completed'
+    && mission.status !== 'failed'
+    && mission.status !== 'stopped'
+    && mission.status !== 'archived';
 }
 
 function matchesMissionSummaryFilter(mission: Mission, filter: MissionSummaryFilter | null): boolean {

@@ -103,6 +103,70 @@ test('AgentJobService keeps package-owned mission authority when AgentJob compat
   );
 });
 
+test('AgentJobService createJob seeds a manual source-backed mission while keeping host bindings separate', () => {
+  const now = 1_701_099_995_000;
+  const bridgeSession: BridgeSession = {
+    id: 'session-agent-service-2',
+    providerProfileId: 'codex-default',
+    codexThreadId: 'thread-agent-service-2',
+    cwd: '/repo',
+    title: 'Mission session',
+    createdAt: now - 1_000,
+    updatedAt: now - 500,
+  };
+  const missionRepository = new InMemoryMissionRepository();
+  const service = new AgentJobService({
+    agentJobs: new InMemoryAgentJobRepository(),
+    missionRepository,
+    bridgeSessions: {
+      getSessionById(bridgeSessionId: string) {
+        return bridgeSessionId === bridgeSession.id ? bridgeSession : null;
+      },
+    },
+    now: () => now,
+  });
+
+  const created = service.createJob({
+    scopeRef: {
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-service-2',
+    },
+    title: 'Seed source-backed mission',
+    originalInput: '/agent repair the waiting task',
+    goal: 'Repair the waiting task and keep the bridge bindings stable.',
+    expectedOutput: 'A verified repair summary.',
+    plan: ['Inspect the context', 'Patch the issue', 'Verify the fix'],
+    category: 'code',
+    riskLevel: 'medium',
+    mode: 'codex',
+    providerProfileId: 'codex-default',
+    bridgeSessionId: bridgeSession.id,
+    cwd: '/repo',
+    locale: 'zh-CN',
+    maxAttempts: 3,
+  });
+
+  const detail = service.getMissionDetail(created.id);
+  assert.equal(detail?.mission.source, 'manual');
+  assert.equal(detail?.hostBindings.platform, 'weixin');
+  assert.equal(detail?.hostBindings.source, 'manual');
+  assert.equal(detail?.hostBindings.bridgeSessionId, bridgeSession.id);
+  assert.equal(detail?.hostBindings.codexThreadId, bridgeSession.codexThreadId);
+  assert.equal(detail?.currentChecklistSnapshot?.sourceRef, created.id);
+  assert.deepEqual(detail?.currentChecklistSnapshot?.acceptanceCriteria, [created.expectedOutput]);
+  assert.deepEqual(detail?.currentChecklistSnapshot?.plan, created.plan);
+  assert.deepEqual(detail?.workItem?.metadata, {
+    category: 'code',
+    mode: 'codex',
+    originalInput: '/agent repair the waiting task',
+  });
+
+  const events = missionRepository.listEvents(created.id);
+  assert.deepEqual(events.map((event) => event.kind), ['mission.created', 'mission.queued']);
+  assert.equal(events[0]?.metadata.source, 'manual');
+  assert.equal(events[1]?.summary, 'Agent mission queued through the bridge adapter.');
+});
+
 test('AgentJobService retryJob preserves Mission Control runtime history when re-queueing waiting-human missions', () => {
   const now = 1_701_100_000_000;
   const service = makeAgentJobService(now, {

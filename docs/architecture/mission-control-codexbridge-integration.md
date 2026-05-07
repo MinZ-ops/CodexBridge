@@ -70,6 +70,17 @@ Main remaining integration gap:
     repository
   - `AgentJob` can now be rebuilt as a compatibility projection/cache after
     restart or projection loss instead of remaining the only mission store
+- Phase 9b now adds package-owned source-backed mission creation for the first
+  real host flow:
+  - `/agent` creation seeds the authoritative mission repository through a
+    normalized manual `WorkItemSourceSummary` plus package-owned
+    `createMission` command instead of synthesizing mission truth only from the
+    host job projection
+  - mission `source` can now stay `manual` while `platform` /
+    `externalScopeId` continue to represent CodexBridge host bindings, so host
+    surface and work-item provenance are no longer conflated
+  - checklist snapshot source revision/hash provenance is preserved at mission
+    creation time instead of being a later host-local reconstruction concern
 - `/agent` `list/show/stop/retry` now consume that package API through an
   authoritative mission repository plus `AgentJob` projection instead of
   rebuilding runtime truth directly from bridge compatibility fields
@@ -81,9 +92,10 @@ Main remaining integration gap:
   persists through the package-owned progress sink so mission workpad/timeline
   state can retain bridge-delivered progress without letting the host mutate
   lifecycle truth directly
-- the next hardening work is finishing the remaining projection thinning and
-  Phase 9 source/supervision semantics, so future Telegram, CLI, or web hosts
-  do not re-implement bridge-local runtime logic
+- the next hardening work is finishing source sync beyond initial manual
+  creation, the remaining projection thinning, and Phase 9 supervision
+  semantics, so future Telegram, CLI, or web hosts do not re-implement
+  bridge-local runtime logic
 
 ## V0 Migration Baseline Sources
 

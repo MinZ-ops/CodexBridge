@@ -580,8 +580,9 @@ transitional:
   shrinking toward a pure projection/cache
 - `/agent` reads still need to move further toward package-owned
   command/query/timeline contracts
-- source-backed mission creation/sync and package-owned supervision semantics
-  still belong to the unfinished `Phase 9` backlog
+- source-backed mission sync beyond the initial manual create path and
+  package-owned supervision semantics still belong to the unfinished `Phase 9`
+  backlog
 
 ## Phase 7: Checklist-First Domain Hardening
 
@@ -667,12 +668,20 @@ authoritative lifecycle status directly. The current `/agent` run path now uses
 that sink for provider/verifier progress persistence while supervision and
 source-backed mission creation remain unfinished.
 
+Phase 9b landed: Mission Control now exposes a package-owned `createMission`
+command that consumes a normalized `WorkItemSourceSummary`, persists
+authoritative `WorkItem + Mission + MissionGeneration + ChecklistSnapshot`
+records from that source-backed input, and keeps host bindings separate from
+work-item provenance. CodexBridge `/agent` creation now seeds the authoritative
+mission repository through that command with `source=manual` while preserving
+`platform=weixin|telegram` as host-surface binding metadata.
+
 - [x] Add `WorkItemSourceAdapter` as the source abstraction
-- [ ] Support source-backed work items such as:
-  - local todo/checklist
-  - manual host-created work items
-  - future issue/board integrations
-- [ ] Keep external checklist/source truth separate from internal immutable
+- [x] Support manual host-created source-backed work items through the
+  package-owned create command
+- [ ] Support local todo/checklist source adapters
+- [ ] Support future issue/board integrations
+- [x] Keep external checklist/source truth separate from internal immutable
   `ChecklistSnapshot` runtime copies
 - [x] Add restricted provider/agent progress update paths for workpad/progress
   reporting without lifecycle-state mutation
@@ -689,7 +698,7 @@ source-backed mission creation remain unfinished.
 
 Completion criteria:
 
-- [ ] Mission Control can consume and track source-backed work items without
+- [x] Mission Control can consume and track source-backed work items without
   assuming a chat-only origin
 - [ ] The runtime can recover, continue, and report progress using package-owned
   supervision semantics
