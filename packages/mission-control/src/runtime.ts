@@ -1204,7 +1204,16 @@ export class MissionRuntime {
   }
 
   private saveMission(mission: Mission): Mission {
-    const savedMission = this.repository.saveMission(normalizeMissionRecord(mission));
+    const normalizedMission = normalizeMissionRecord(mission);
+    const persistedMission = this.repository.getMissionById(normalizedMission.id);
+    const mergedMission = persistedMission
+      && persistedMission.workpad.updatedAt > normalizedMission.workpad.updatedAt
+      ? {
+        ...normalizedMission,
+        workpad: persistedMission.workpad,
+      }
+      : normalizedMission;
+    const savedMission = this.repository.saveMission(mergedMission);
     this.syncMissionDomainRecords(savedMission);
     return savedMission;
   }
@@ -1307,6 +1316,8 @@ export class MissionRuntime {
     const existingWorkItem = this.repository.getWorkItemById(normalizedMission.workItemId);
     const nextWorkItem = createMissionWorkItem(normalizedMission, {
       at: normalizedMission.updatedAt,
+      sourceRevision: existingWorkItem?.sourceRevision ?? null,
+      metadata: existingWorkItem?.metadata ?? null,
     });
     if (!existingWorkItem || JSON.stringify(existingWorkItem) !== JSON.stringify(nextWorkItem)) {
       this.repository.saveWorkItem(nextWorkItem);

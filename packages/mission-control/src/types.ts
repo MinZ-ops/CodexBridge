@@ -139,12 +139,14 @@ export interface WorkItem {
   id: string;
   source: MissionSource;
   sourceRef: string | null;
+  sourceRevision: string | null;
   platform: string;
   externalScopeId: string;
   title: string;
   immutableGoal: string;
   immutablePrompt: string;
   expectedOutput: string;
+  metadata: Record<string, unknown> | null;
   createdAt: number;
   updatedAt: number;
 }
@@ -169,10 +171,12 @@ export interface ChecklistSnapshot {
   version: number;
   source: MissionSource;
   sourceRef: string | null;
+  sourceRevision: string | null;
   expectedOutput: string | null;
   acceptanceCriteria: string[];
   plan: string[];
   items: ChecklistItem[];
+  hash: string;
   supersededAt: number | null;
   createdAt: number;
   updatedAt: number;

@@ -1,6 +1,6 @@
 import fs from 'node:fs';
 import path from 'node:path';
-import { normalizeMissionRecord } from './domain_records.js';
+import { hashChecklistSnapshot, normalizeMissionRecord } from './domain_records.js';
 import { isMissionResumable } from './state_machine.js';
 import type { MissionRepository } from './repository.js';
 import type {
@@ -163,7 +163,9 @@ export class JsonFileMissionRepository implements MissionRepository {
       const raw = fs.readFileSync(this.statePath, 'utf8');
       const parsed = JSON.parse(raw) as Partial<JsonState>;
       return {
-        workItems: Array.isArray(parsed.workItems) ? cloneValue(parsed.workItems) : [],
+        workItems: Array.isArray(parsed.workItems)
+          ? parsed.workItems.map((workItem) => normalizeWorkItem(cloneValue(workItem)))
+          : [],
         missions: Array.isArray(parsed.missions)
           ? parsed.missions.map((mission) => normalizeMissionRecord(cloneValue(mission)))
           : [],
@@ -236,10 +238,11 @@ function normalizeGeneration(generation: MissionGeneration): MissionGeneration {
 }
 
 function normalizeChecklistSnapshot(snapshot: ChecklistSnapshot): ChecklistSnapshot {
-  return {
+  const normalized: ChecklistSnapshot = {
     ...snapshot,
     generationId: typeof snapshot.generationId === 'string' ? snapshot.generationId : null,
     sourceRef: typeof snapshot.sourceRef === 'string' ? snapshot.sourceRef : null,
+    sourceRevision: typeof snapshot.sourceRevision === 'string' ? snapshot.sourceRevision : null,
     expectedOutput: typeof snapshot.expectedOutput === 'string' ? snapshot.expectedOutput : null,
     acceptanceCriteria: Array.isArray(snapshot.acceptanceCriteria) ? [...snapshot.acceptanceCriteria] : [],
     plan: Array.isArray(snapshot.plan) ? [...snapshot.plan] : [],
@@ -251,6 +254,12 @@ function normalizeChecklistSnapshot(snapshot: ChecklistSnapshot): ChecklistSnaps
         completionSummary: typeof item.completionSummary === 'string' ? item.completionSummary : null,
       }))
       : [],
+  };
+  return {
+    ...normalized,
+    hash: typeof snapshot.hash === 'string' && snapshot.hash.trim().length > 0
+      ? snapshot.hash
+      : hashChecklistSnapshot(normalized),
   };
 }
 
@@ -287,4 +296,17 @@ function normalizePositiveInteger(value: number | null | undefined): number | nu
   }
   const normalized = Math.trunc(value);
   return normalized > 0 ? normalized : null;
+}
+
+function normalizeWorkItem(workItem: WorkItem): WorkItem {
+  return {
+    ...workItem,
+    sourceRef: typeof workItem.sourceRef === 'string' ? workItem.sourceRef : null,
+    sourceRevision: typeof workItem.sourceRevision === 'string' ? workItem.sourceRevision : null,
+    metadata: isRecord(workItem.metadata) ? cloneValue(workItem.metadata) : null,
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }

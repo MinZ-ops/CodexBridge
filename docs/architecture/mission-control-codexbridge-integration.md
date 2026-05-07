@@ -77,6 +77,10 @@ Main remaining integration gap:
   progress, approval forwarding, and artifact-publication seams through that
   host adapter contract instead of wiring those concerns straight through the
   runner
+- bridge-side provider/verifier progress on `/agent runAgentJob` now also
+  persists through the package-owned progress sink so mission workpad/timeline
+  state can retain bridge-delivered progress without letting the host mutate
+  lifecycle truth directly
 - the next hardening work is finishing the remaining projection thinning and
   Phase 9 source/supervision semantics, so future Telegram, CLI, or web hosts
   do not re-implement bridge-local runtime logic

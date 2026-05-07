@@ -580,8 +580,8 @@ transitional:
   shrinking toward a pure projection/cache
 - `/agent` reads still need to move further toward package-owned
   command/query/timeline contracts
-- source adapters and package-owned supervision semantics still belong to the
-  unfinished `Phase 9` backlog
+- source-backed mission creation/sync and package-owned supervision semantics
+  still belong to the unfinished `Phase 9` backlog
 
 ## Phase 7: Checklist-First Domain Hardening
 
@@ -659,14 +659,22 @@ Completion criteria:
 
 ## Phase 9: Work Item Sources and Runtime Supervision
 
-- [ ] Add `WorkItemSourceAdapter` as the source abstraction
+Phase 9a landed: Mission Control now exports a first `WorkItemSourceAdapter`
+contract plus normalized manual source summaries, persists checklist snapshot
+source revisions + hashes, and exposes a repository-backed progress sink that
+updates workpad/timeline state without letting providers or hosts mutate
+authoritative lifecycle status directly. The current `/agent` run path now uses
+that sink for provider/verifier progress persistence while supervision and
+source-backed mission creation remain unfinished.
+
+- [x] Add `WorkItemSourceAdapter` as the source abstraction
 - [ ] Support source-backed work items such as:
   - local todo/checklist
   - manual host-created work items
   - future issue/board integrations
 - [ ] Keep external checklist/source truth separate from internal immutable
   `ChecklistSnapshot` runtime copies
-- [ ] Add restricted provider/agent progress update paths for workpad/progress
+- [x] Add restricted provider/agent progress update paths for workpad/progress
   reporting without lifecycle-state mutation
 - [ ] Add package-owned supervision semantics that absorb the useful parts of
   `loop.sh`:

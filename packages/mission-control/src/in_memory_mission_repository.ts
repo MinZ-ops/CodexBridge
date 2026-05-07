@@ -1,4 +1,4 @@
-import { normalizeMissionRecord } from './domain_records.js';
+import { hashChecklistSnapshot, normalizeMissionRecord } from './domain_records.js';
 import { isMissionResumable } from './state_machine.js';
 import type { MissionRepository } from './repository.js';
 import type {
@@ -154,16 +154,59 @@ export class InMemoryMissionRepository implements MissionRepository {
 
 function normalizeState(state: InMemoryState): InMemoryState {
   return {
-    workItems: Array.isArray(state.workItems) ? cloneValue(state.workItems) : [],
+    workItems: Array.isArray(state.workItems)
+      ? state.workItems.map((workItem) => normalizeWorkItem(cloneValue(workItem)))
+      : [],
     missions: Array.isArray(state.missions)
       ? state.missions.map((mission) => normalizeMissionRecord(cloneValue(mission)))
       : [],
     generations: Array.isArray(state.generations) ? cloneValue(state.generations) : [],
-    checklistSnapshots: Array.isArray(state.checklistSnapshots) ? cloneValue(state.checklistSnapshots) : [],
+    checklistSnapshots: Array.isArray(state.checklistSnapshots)
+      ? state.checklistSnapshots.map((snapshot) => normalizeChecklistSnapshot(cloneValue(snapshot)))
+      : [],
     planChangeRequests: Array.isArray(state.planChangeRequests) ? cloneValue(state.planChangeRequests) : [],
     attempts: Array.isArray(state.attempts) ? cloneValue(state.attempts) : [],
     events: Array.isArray(state.events) ? cloneValue(state.events) : [],
   };
+}
+
+function normalizeWorkItem(workItem: WorkItem): WorkItem {
+  return {
+    ...workItem,
+    sourceRef: typeof workItem.sourceRef === 'string' ? workItem.sourceRef : null,
+    sourceRevision: typeof workItem.sourceRevision === 'string' ? workItem.sourceRevision : null,
+    metadata: isRecord(workItem.metadata) ? cloneValue(workItem.metadata) : null,
+  };
+}
+
+function normalizeChecklistSnapshot(snapshot: ChecklistSnapshot): ChecklistSnapshot {
+  const normalized: ChecklistSnapshot = {
+    ...snapshot,
+    generationId: typeof snapshot.generationId === 'string' ? snapshot.generationId : null,
+    sourceRef: typeof snapshot.sourceRef === 'string' ? snapshot.sourceRef : null,
+    sourceRevision: typeof snapshot.sourceRevision === 'string' ? snapshot.sourceRevision : null,
+    expectedOutput: typeof snapshot.expectedOutput === 'string' ? snapshot.expectedOutput : null,
+    acceptanceCriteria: Array.isArray(snapshot.acceptanceCriteria) ? [...snapshot.acceptanceCriteria] : [],
+    plan: Array.isArray(snapshot.plan) ? [...snapshot.plan] : [],
+    items: Array.isArray(snapshot.items)
+      ? snapshot.items.map((item) => ({
+        ...item,
+        detail: typeof item.detail === 'string' ? item.detail : null,
+        sourceRef: typeof item.sourceRef === 'string' ? item.sourceRef : null,
+        completionSummary: typeof item.completionSummary === 'string' ? item.completionSummary : null,
+      }))
+      : [],
+  };
+  return {
+    ...normalized,
+    hash: typeof snapshot.hash === 'string' && snapshot.hash.trim().length > 0
+      ? snapshot.hash
+      : hashChecklistSnapshot(normalized),
+  };
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === 'object' && value !== null && !Array.isArray(value);
 }
 
 function upsertById<T extends { id: string }>(items: T[], value: T): T[] {

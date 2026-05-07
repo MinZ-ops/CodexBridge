@@ -1,3 +1,4 @@
+import crypto from 'node:crypto';
 import type {
   ChecklistItem,
   ChecklistSnapshot,
@@ -111,6 +112,8 @@ export function createMissionWorkItem(
   mission: Mission,
   options: {
     at?: number;
+    sourceRevision?: string | null;
+    metadata?: Record<string, unknown> | null;
   } = {},
 ): WorkItem {
   const normalized = normalizeMissionRecord(mission);
@@ -119,12 +122,14 @@ export function createMissionWorkItem(
     id: normalized.workItemId,
     source: normalized.source,
     sourceRef: normalized.sourceRef,
+    sourceRevision: normalizeText(options.sourceRevision) ?? null,
     platform: normalized.platform,
     externalScopeId: normalized.externalScopeId,
     title: normalized.title,
     immutableGoal: normalized.immutableGoal,
     immutablePrompt: normalized.immutablePrompt,
     expectedOutput: normalized.expectedOutput,
+    metadata: cloneRecord(options.metadata),
     createdAt: normalized.createdAt,
     updatedAt: at,
   };
@@ -137,12 +142,13 @@ export function createMissionChecklistSnapshot(
     id?: string | null;
     version?: number | null;
     generationId?: string | null;
+    sourceRevision?: string | null;
   } = {},
 ): ChecklistSnapshot {
   const normalized = normalizeMissionRecord(mission);
   const version = normalizePositiveInteger(options.version) ?? normalized.currentChecklistSnapshotVersion;
   const at = options.at ?? normalized.updatedAt;
-  return {
+  const snapshot: ChecklistSnapshot = {
     id: normalizeText(options.id) ?? buildChecklistSnapshotId(normalized.id, version),
     missionId: normalized.id,
     workItemId: normalized.workItemId,
@@ -150,13 +156,19 @@ export function createMissionChecklistSnapshot(
     version,
     source: normalized.source,
     sourceRef: normalized.sourceRef,
+    sourceRevision: normalizeText(options.sourceRevision) ?? null,
     expectedOutput: normalized.expectedOutput,
     acceptanceCriteria: [...normalized.acceptanceCriteria],
     plan: [...normalized.plan],
     items: buildChecklistItems(normalized),
+    hash: '',
     supersededAt: null,
     createdAt: at,
     updatedAt: at,
+  };
+  return {
+    ...snapshot,
+    hash: hashChecklistSnapshot(snapshot),
   };
 }
 
@@ -301,6 +313,29 @@ export function mapMissionStatusToGenerationStatus(status: MissionStatus): Missi
   }
 }
 
+export function hashChecklistSnapshot(snapshot: ChecklistSnapshot): string {
+  const normalized = {
+    source: snapshot.source,
+    sourceRef: snapshot.sourceRef,
+    sourceRevision: snapshot.sourceRevision,
+    expectedOutput: snapshot.expectedOutput,
+    acceptanceCriteria: [...snapshot.acceptanceCriteria],
+    plan: [...snapshot.plan],
+    items: snapshot.items.map((item) => ({
+      id: item.id,
+      kind: item.kind,
+      title: item.title,
+      detail: item.detail,
+      order: item.order,
+      status: item.status,
+      sourceRef: item.sourceRef,
+      completionSummary: item.completionSummary,
+      completedAt: item.completedAt,
+    })),
+  };
+  return crypto.createHash('sha256').update(JSON.stringify(normalized)).digest('hex');
+}
+
 function buildChecklistItems(mission: Mission): ChecklistItem[] {
   const items: ChecklistItem[] = [];
   let order = 0;
@@ -389,4 +424,11 @@ function normalizeText(value: string | null | undefined): string | null {
   }
   const trimmed = value.trim();
   return trimmed.length > 0 ? trimmed : null;
+}
+
+function cloneRecord(value: Record<string, unknown> | null | undefined): Record<string, unknown> | null {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) {
+    return null;
+  }
+  return structuredClone(value);
 }

@@ -1,6 +1,7 @@
 import {
   MissionRuntime,
   type MissionHostAdapter,
+  RepositoryMissionProgressSink,
   createMission,
   createMissionVerifierResult,
   isMissionResumable,
@@ -17,6 +18,7 @@ import {
   type PlanChangeRequest,
   type MissionProvider,
   type MissionProviderArtifact,
+  type MissionProgressSink,
   type MissionProviderResult,
   type MissionRepository,
   type MissionRunResult,
@@ -177,6 +179,15 @@ export async function runAgentJobWithMissionControl(
     onProgress: options.onProgress ?? null,
     onApprovalRequest: options.onApprovalRequest ?? null,
   });
+  let progressEventCounter = 0;
+  const progressSink = new RepositoryMissionProgressSink({
+    repository,
+    now,
+    generateId: () => {
+      progressEventCounter += 1;
+      return `mission-progress:${options.job.id}:${progressEventCounter}`;
+    },
+  });
   const provider = new BridgeMissionProvider({
     jobId: options.job.id,
     scopeRef,
@@ -186,6 +197,7 @@ export async function runAgentJobWithMissionControl(
     stopSession: options.stopSession,
     progressText: options.progressText,
     hostAdapter,
+    progressSink,
   });
   const verifier = new BridgeMissionVerifier({
     jobId: options.job.id,
@@ -194,6 +206,7 @@ export async function runAgentJobWithMissionControl(
     verifyJob: options.verifyJob,
     progressText: options.progressText,
     hostAdapter,
+    progressSink,
   });
 
   const runtime = new MissionRuntime({
@@ -436,6 +449,7 @@ class BridgeMissionProvider implements MissionProvider {
     stopSession: RunAgentJobWithMissionControlOptions['stopSession'];
     progressText: MissionControlAgentJobRunProgressText;
     hostAdapter: MissionHostAdapter;
+    progressSink: MissionProgressSink;
   }) {}
 
   async start(input: MissionExecutionInput) {
@@ -478,6 +492,17 @@ class BridgeMissionProvider implements MissionProvider {
     const hostContext = await this.options.hostAdapter.getContext(input.mission.id);
     if (!this.runningAttempts.has(input.attempt.id)) {
       this.runningAttempts.add(input.attempt.id);
+      await this.options.progressSink.appendProgress({
+        missionId: input.mission.id,
+        attemptId: input.attempt.id,
+        checklistItemId: null,
+        kind: 'summary',
+        message: this.options.progressText.running(input.attempt.index, input.mission.maxAttempts),
+        metadata: {
+          source: 'bridge-runner',
+          stage: 'running',
+        },
+      });
       await this.options.hostAdapter.publishProgress({
         missionId: input.mission.id,
         attemptId: input.attempt.id,
@@ -510,11 +535,24 @@ class BridgeMissionProvider implements MissionProvider {
       },
       {
         onProgress: async (progress) => {
+          const message = progress.text ?? progress.delta;
+          await this.options.progressSink.appendProgress({
+            missionId: input.mission.id,
+            attemptId: input.attempt.id,
+            checklistItemId: null,
+            kind: progress.outputKind === 'status' ? 'summary' : 'substep',
+            message,
+            metadata: {
+              source: 'provider',
+              delta: progress.delta,
+              outputKind: progress.outputKind,
+            },
+          });
           await this.options.hostAdapter.publishProgress({
             missionId: input.mission.id,
             attemptId: input.attempt.id,
             status: 'running',
-            text: progress.text ?? progress.delta,
+            text: message,
             outputKind: progress.outputKind === 'status' ? 'status' : 'commentary',
             details: {
               delta: progress.delta,
@@ -575,6 +613,7 @@ class BridgeMissionVerifier implements MissionVerifier {
     verifyJob: RunAgentJobWithMissionControlOptions['verifyJob'];
     progressText: MissionControlAgentJobRunProgressText;
     hostAdapter: MissionHostAdapter;
+    progressSink: MissionProgressSink;
   }) {}
 
   async verify(input: {
@@ -584,6 +623,17 @@ class BridgeMissionVerifier implements MissionVerifier {
     activeChecklistItem: ChecklistItem | null;
     providerResult: MissionProviderResult;
   }): Promise<MissionVerifierResult> {
+    await this.options.progressSink.appendProgress({
+      missionId: input.mission.id,
+      attemptId: input.attempt.id,
+      checklistItemId: input.activeChecklistItem?.id ?? null,
+      kind: 'summary',
+      message: this.options.progressText.verifying(),
+      metadata: {
+        source: 'bridge-verifier',
+        stage: 'verifying',
+      },
+    });
     await this.options.hostAdapter.publishProgress({
       missionId: input.mission.id,
       attemptId: input.attempt.id,
@@ -607,6 +657,18 @@ class BridgeMissionVerifier implements MissionVerifier {
       execution?.session ?? null,
     );
     if (!verification.pass && verification.nextAction === 'retry') {
+      await this.options.progressSink.appendProgress({
+        missionId: input.mission.id,
+        attemptId: input.attempt.id,
+        checklistItemId: input.activeChecklistItem?.id ?? null,
+        kind: 'blocker',
+        message: verification.summary,
+        metadata: {
+          source: 'bridge-verifier',
+          stage: 'repair',
+          issues: verification.issues,
+        },
+      });
       await this.options.hostAdapter.publishProgress({
         missionId: input.mission.id,
         attemptId: input.attempt.id,

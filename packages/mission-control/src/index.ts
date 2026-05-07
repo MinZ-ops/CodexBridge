@@ -1,6 +1,6 @@
 export const MISSION_CONTROL_PACKAGE_NAME = '@codexbridge/mission-control' as const;
 
-export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-8c-authoritative-mission-repository' as const;
+export const MISSION_CONTROL_PACKAGE_PHASE = 'phase-9a-source-and-progress-foundations' as const;
 
 export const MISSION_CONTROL_OWNS = [
   'mission-domain-model',
@@ -14,6 +14,8 @@ export const MISSION_CONTROL_OWNS = [
   'attempt-event-workpad-persistence',
   'mission-control-actions',
   'host-adapter-contract',
+  'work-item-source-contract',
+  'progress-sink-contract',
 ] as const;
 
 export const MISSION_CONTROL_DOES_NOT_OWN = [
@@ -50,6 +52,8 @@ export * from './control_actions.js';
 export * from './cycle_result.js';
 export * from './provider.js';
 export * from './host_adapter.js';
+export * from './source.js';
+export * from './progress.js';
 export * from './codex_provider.js';
 export * from './verifier.js';
 export * from './runtime.js';
