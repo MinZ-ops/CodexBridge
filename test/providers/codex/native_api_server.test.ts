@@ -15,6 +15,23 @@ function makeProfile(overrides = {}) {
   };
 }
 
+function parseSseText(text: string): Array<{ event: string; data: any }> {
+  const blocks = text.split('\n\n').map((entry) => entry.trim()).filter(Boolean);
+  const parsed: Array<{ event: string; data: any }> = [];
+  for (const block of blocks) {
+    const eventLine = block.split('\n').find((line) => line.startsWith('event: '));
+    const dataLine = block.split('\n').find((line) => line.startsWith('data: '));
+    if (!eventLine || !dataLine || dataLine === 'data: [DONE]') {
+      continue;
+    }
+    parsed.push({
+      event: eventLine.slice(7).trim(),
+      data: JSON.parse(dataLine.slice(6)),
+    });
+  }
+  return parsed;
+}
+
 test('CodexNativeApiServer exposes /v1/models with runtime metadata', async () => {
   const runtime = new CodexNativeRuntime({
     now: () => 111,
@@ -127,7 +144,7 @@ test('CodexNativeApiServer exposes /v1/health with request-scoped readiness and 
     assert.equal(body.localhost_only, true);
     assert.equal(body.route_capabilities.responses.create, true);
     assert.equal(body.route_capabilities.responses.continuation, true);
-    assert.equal(body.route_capabilities.responses.stream, false);
+    assert.equal(body.route_capabilities.responses.stream, true);
     assert.equal(body.route_capabilities.responses.compact, false);
     assert.equal(body.route_capabilities.chat_completions.create, false);
     assert.equal(body.continuation_registry.kind, 'in_memory');
@@ -437,7 +454,125 @@ test('CodexNativeApiServer continues the same isolated native thread via previou
   }
 });
 
-test('CodexNativeApiServer rejects unknown continuation ids and streaming requests before runtime execution', async () => {
+test('CodexNativeApiServer streams /v1/responses as SSE events over the native runtime progress contract', async () => {
+  const calls: Array<{ kind: string; payload: any }> = [];
+  const runtime = new CodexNativeRuntime({
+    now: () => 606_000,
+    createSessionId: () => 'session-native-api-stream-1',
+    readAccountIdentity: () => ({
+      email: 'native@example.com',
+      name: 'Native Runtime',
+      authMode: 'chatgpt',
+      accountId: 'acc_native',
+      plan: 'plus',
+      authPath: '/tmp/auth.json',
+    }),
+  });
+  const providerPlugin = {
+    async listModels() {
+      calls.push({ kind: 'listModels', payload: null });
+      return [{
+        id: 'gpt-5.5',
+        model: 'gpt-5.5',
+        displayName: 'GPT-5.5',
+        description: 'Newest coding model.',
+        isDefault: true,
+        supportedReasoningEfforts: ['medium', 'high'],
+        defaultReasoningEffort: 'medium',
+      }];
+    },
+    async startThread(params: any) {
+      calls.push({ kind: 'startThread', payload: params });
+      return {
+        threadId: 'thread-native-api-stream-1',
+        cwd: params.cwd,
+        title: params.title,
+      };
+    },
+    async startTurn(params: any) {
+      calls.push({ kind: 'startTurn', payload: params });
+      await params.onTurnStarted?.({
+        threadId: params.bridgeSession.codexThreadId,
+        turnId: 'turn-native-api-stream-1',
+      });
+      await params.onProgress?.({
+        text: 'Thinking aloud.',
+        delta: 'Thinking aloud.',
+        outputKind: 'commentary',
+      });
+      await params.onProgress?.({
+        text: 'Final ',
+        delta: 'Final ',
+        outputKind: 'final_answer',
+      });
+      await params.onProgress?.({
+        text: 'Final answer.',
+        delta: 'answer.',
+        outputKind: 'final_answer',
+      });
+      return {
+        outputText: 'Final answer.',
+        previewText: '',
+        threadId: params.bridgeSession.codexThreadId,
+        turnId: 'turn-native-api-stream-1',
+      };
+    },
+  } as any;
+  const server = new CodexNativeApiServer({
+    runtime,
+    resolveRuntimeContext: () => ({
+      providerProfile: makeProfile(),
+      providerPlugin,
+    }),
+    defaultLocale: 'en-US',
+    createResponseId: () => 'resp_native_api_stream_1',
+  });
+  await server.start();
+  try {
+    const response = await fetch(`${server.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: 'Stream this response',
+        stream: true,
+      }),
+    });
+    const text = await response.text();
+    const events = parseSseText(text);
+    const eventTypes = events.map((entry) => entry.event);
+    const createdIndex = eventTypes.indexOf('response.created');
+    const reasoningDeltaIndex = eventTypes.indexOf('response.reasoning_summary_text.delta');
+    const textDeltaIndex = eventTypes.indexOf('response.output_text.delta');
+    const completedIndex = eventTypes.lastIndexOf('response.completed');
+
+    assert.equal(response.status, 200);
+    assert.match(text, /data: \[DONE\]/);
+    assert.equal(createdIndex >= 0, true);
+    assert.equal(reasoningDeltaIndex > createdIndex, true);
+    assert.equal(textDeltaIndex > reasoningDeltaIndex, true);
+    assert.equal(completedIndex > textDeltaIndex, true);
+
+    const completed = events.at(-1)?.data?.response;
+    assert.equal(completed.id, 'resp_native_api_stream_1');
+    assert.equal(completed.status, 'completed');
+    assert.equal(completed.output[0].type, 'reasoning');
+    assert.equal(completed.output[0].summary[0].text, 'Thinking aloud.');
+    assert.equal(completed.output[1].type, 'message');
+    assert.equal(completed.output[1].content[0].text, 'Final answer.');
+    assert.equal(completed.native_runtime.thread_id, 'thread-native-api-stream-1');
+    assert.equal(completed.native_runtime.turn_id, 'turn-native-api-stream-1');
+    assert.equal(completed.native_runtime.bridge_session_id, 'session-native-api-stream-1');
+    assert.equal(events.every((entry, index) => entry.data.sequence_number === index), true);
+
+    assert.equal(calls[0]?.kind, 'listModels');
+    assert.equal(calls[1]?.kind, 'startThread');
+    assert.equal(calls[2]?.kind, 'startTurn');
+  } finally {
+    await server.stop();
+  }
+});
+
+test('CodexNativeApiServer rejects unknown continuation ids before runtime execution', async () => {
   let resolverCalls = 0;
   const server = new CodexNativeApiServer({
     resolveRuntimeContext: () => {
@@ -461,18 +596,6 @@ test('CodexNativeApiServer rejects unknown continuation ids and streaming reques
     assert.equal(continuationBody.continuation_registry.kind, 'in_memory');
     assert.equal(continuationBody.continuation_registry.persistence, 'in_process');
     assert.equal(continuationBody.continuation_registry.survives_process_restart, false);
-
-    const streamingResponse = await fetch(`${server.baseUrl}/v1/responses`, {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        input: 'hello',
-        stream: true,
-      }),
-    });
-    const streamingBody = await streamingResponse.json() as any;
-    assert.equal(streamingResponse.status, 400);
-    assert.match(streamingBody.error.message, /Streaming is not implemented/);
     assert.equal(resolverCalls, 0);
   } finally {
     await server.stop();

@@ -3,6 +3,8 @@ import http, { type IncomingMessage, type ServerResponse } from 'node:http';
 import {
   CodexNativeRuntime,
   type CodexNativeRuntimeReadiness,
+  type CodexNativeRuntimeTurnResult,
+  type CodexNativeRuntimeTurnStartedMeta,
 } from './native_runtime.js';
 import {
   InMemoryCodexNativeApiContinuationRegistry,
@@ -11,7 +13,12 @@ import {
   type CodexNativeApiContinuationLookupResult,
   type CodexNativeApiContinuationRegistry,
 } from './native_api_continuation_registry.js';
-import type { ProviderModelInfo, ProviderPluginContract, ProviderProfile } from '../../types/provider.js';
+import type {
+  ProviderModelInfo,
+  ProviderPluginContract,
+  ProviderProfile,
+  ProviderTurnProgress,
+} from '../../types/provider.js';
 
 type JsonRecord = Record<string, any>;
 type AuthPathOrOptions = string | { authPath?: string; env?: NodeJS.ProcessEnv };
@@ -42,6 +49,39 @@ export interface CodexNativeApiServerOptions {
 const DEFAULT_HOST = '127.0.0.1';
 const DEFAULT_TITLE_PREFIX = 'Codex Native API';
 const DEFAULT_MAX_BODY_BYTES = 4 * 1024 * 1024;
+
+interface ResponsesStreamReasoningState {
+  id: string;
+  outputIndex: number;
+  text: string;
+  added: boolean;
+  partAdded: boolean;
+  done: boolean;
+}
+
+interface ResponsesStreamMessageState {
+  id: string;
+  outputIndex: number;
+  text: string;
+  added: boolean;
+  contentAdded: boolean;
+  done: boolean;
+}
+
+interface ResponsesStreamState {
+  responseId: string;
+  createdAt: number;
+  request: JsonRecord;
+  responseModel: string | null;
+  initialNativeRuntime: JsonRecord;
+  output: JsonRecord[];
+  reasoning: ResponsesStreamReasoningState | null;
+  message: ResponsesStreamMessageState | null;
+  createdEmitted: boolean;
+  terminalEmitted: boolean;
+  nextOutputIndex: number;
+  sequence: number;
+}
 
 export class CodexNativeApiServer {
   private readonly runtime: CodexNativeRuntime;
@@ -251,7 +291,7 @@ export class CodexNativeApiServer {
         responses: {
           create: true,
           continuation: true,
-          stream: false,
+          stream: true,
           compact: false,
         },
         chat_completions: {
@@ -309,15 +349,7 @@ export class CodexNativeApiServer {
       return;
     }
     const requestBody = body as JsonRecord;
-    if (Boolean(requestBody.stream)) {
-      writeJson(response, 400, {
-        error: {
-          message: 'Streaming is not implemented in the native API shell yet.',
-          type: 'invalid_request_error',
-        },
-      });
-      return;
-    }
+    const stream = Boolean(requestBody.stream);
     const previousResponseId = normalizeString(requestBody.previous_response_id) || null;
     const prompt = buildPromptFromResponsesRequest(requestBody);
     if (!prompt) {
@@ -404,70 +436,49 @@ export class CodexNativeApiServer {
     const internalThreadMetadata = extractInternalCodexbridgeThreadMetadata(requestMetadata);
     const internalTaskClass = extractInternalCodexbridgeTaskClass(requestMetadata);
 
+    if (stream) {
+      await this.handleStreamingResponses({
+        response,
+        request: requestBody,
+        responseId,
+        previousResponseId,
+        startedAt,
+        createdAt,
+        context,
+        readiness,
+        continuationEntry,
+        prompt,
+        locale,
+        requestMetadata,
+        internalEventMetadata,
+        internalThreadMetadata,
+        internalTaskClass,
+        effectiveModel,
+        effectiveCwd,
+        reasoningEffort,
+        serviceTier,
+      });
+      return;
+    }
+
     try {
-      const execution = continuationEntry
-        ? await this.runtime.continueIsolatedTurn({
-          providerProfile: context.providerProfile,
-          providerPlugin: context.providerPlugin,
-          bridgeSession: continuationEntry.bridgeSession,
-          model: effectiveModel,
-          reasoningEffort,
-          serviceTier,
-          prepareTurn: (session) => ({
-            inputText: prompt,
-            locale,
-            metadata: {
-              source: 'codex-native-api',
-              responseId,
-              previousResponseId,
-              requestMetadata: requestMetadata ?? {},
-            },
-            event: {
-              platform: 'codex-native-api',
-              externalScopeId: responseId,
-              text: prompt,
-              cwd: session.cwd,
-              locale,
-              attachments: [],
-              metadata: internalEventMetadata,
-            },
-          }),
-        })
-        : await this.runtime.runIsolatedTurn({
-          providerProfile: context.providerProfile,
-          providerPlugin: context.providerPlugin,
-          cwd: effectiveCwd,
-          title: deriveRequestTitle(this.requestTitlePrefix, prompt),
-          metadata: {
-            ...(internalThreadMetadata ?? {}),
-            source: 'codex-native-api',
-            route: '/v1/responses',
-            responseId,
-            user: normalizeNullableString(requestBody.user),
-            sideTaskClass: internalTaskClass,
-          },
-          model: effectiveModel,
-          reasoningEffort,
-          serviceTier,
-          prepareTurn: (session) => ({
-            inputText: prompt,
-            locale,
-            metadata: {
-              source: 'codex-native-api',
-              responseId,
-              requestMetadata: requestMetadata ?? {},
-            },
-            event: {
-              platform: 'codex-native-api',
-              externalScopeId: responseId,
-              text: prompt,
-              cwd: session.cwd,
-              locale,
-              attachments: [],
-              metadata: internalEventMetadata,
-            },
-          }),
-        });
+      const execution = await this.executeResponsesTurn({
+        context,
+        continuationEntry,
+        responseId,
+        previousResponseId,
+        prompt,
+        locale,
+        requestMetadata,
+        internalEventMetadata,
+        internalThreadMetadata,
+        internalTaskClass,
+        effectiveModel,
+        effectiveCwd,
+        reasoningEffort,
+        serviceTier,
+        requestUser: normalizeNullableString(requestBody.user),
+      });
       const outputText = normalizeString(execution.result.outputText);
       const previewText = normalizeString(execution.result.previewText);
       const effectiveText = outputText || previewText;
@@ -532,6 +543,276 @@ export class CodexNativeApiServer {
           readiness,
         }),
       });
+    }
+  }
+
+  private async executeResponsesTurn({
+    context,
+    continuationEntry,
+    responseId,
+    previousResponseId,
+    prompt,
+    locale,
+    requestMetadata,
+    internalEventMetadata,
+    internalThreadMetadata,
+    internalTaskClass,
+    effectiveModel,
+    effectiveCwd,
+    reasoningEffort,
+    serviceTier,
+    requestUser = null,
+    onProgress = null,
+    onTurnStarted = null,
+  }: {
+    context: CodexNativeApiRuntimeContext;
+    continuationEntry: CodexNativeApiContinuationEntry | null;
+    responseId: string;
+    previousResponseId: string | null;
+    prompt: string;
+    locale: string | null;
+    requestMetadata: JsonRecord | null;
+    internalEventMetadata: JsonRecord | undefined;
+    internalThreadMetadata: JsonRecord | null;
+    internalTaskClass: string | null;
+    effectiveModel: string | null;
+    effectiveCwd: string | null;
+    reasoningEffort: string | null;
+    serviceTier: string | null;
+    requestUser?: string | null;
+    onProgress?: ((progress: ProviderTurnProgress) => Promise<void> | void) | null;
+    onTurnStarted?: ((meta: CodexNativeRuntimeTurnStartedMeta) => Promise<void> | void) | null;
+  }): Promise<CodexNativeRuntimeTurnResult> {
+    return continuationEntry
+      ? this.runtime.continueIsolatedTurn({
+        providerProfile: context.providerProfile,
+        providerPlugin: context.providerPlugin!,
+        bridgeSession: continuationEntry.bridgeSession,
+        model: effectiveModel,
+        reasoningEffort,
+        serviceTier,
+        onProgress,
+        onTurnStarted,
+        prepareTurn: (session) => ({
+          inputText: prompt,
+          locale,
+          metadata: {
+            source: 'codex-native-api',
+            responseId,
+            previousResponseId,
+            requestMetadata: requestMetadata ?? {},
+          },
+          event: {
+            platform: 'codex-native-api',
+            externalScopeId: responseId,
+            text: prompt,
+            cwd: session.cwd,
+            locale,
+            attachments: [],
+            metadata: internalEventMetadata,
+          },
+        }),
+      })
+      : this.runtime.runIsolatedTurn({
+        providerProfile: context.providerProfile,
+        providerPlugin: context.providerPlugin!,
+        cwd: effectiveCwd,
+        title: deriveRequestTitle(this.requestTitlePrefix, prompt),
+        metadata: {
+          ...(internalThreadMetadata ?? {}),
+          source: 'codex-native-api',
+          route: '/v1/responses',
+          responseId,
+          user: requestUser,
+          sideTaskClass: internalTaskClass,
+        },
+        model: effectiveModel,
+        reasoningEffort,
+        serviceTier,
+        onProgress,
+        onTurnStarted,
+        prepareTurn: (session) => ({
+          inputText: prompt,
+          locale,
+          metadata: {
+            source: 'codex-native-api',
+            responseId,
+            requestMetadata: requestMetadata ?? {},
+          },
+          event: {
+            platform: 'codex-native-api',
+            externalScopeId: responseId,
+            text: prompt,
+            cwd: session.cwd,
+            locale,
+            attachments: [],
+            metadata: internalEventMetadata,
+          },
+        }),
+      });
+  }
+
+  private async handleStreamingResponses({
+    response,
+    request,
+    responseId,
+    previousResponseId,
+    startedAt,
+    createdAt,
+    context,
+    readiness,
+    continuationEntry,
+    prompt,
+    locale,
+    requestMetadata,
+    internalEventMetadata,
+    internalThreadMetadata,
+    internalTaskClass,
+    effectiveModel,
+    effectiveCwd,
+    reasoningEffort,
+    serviceTier,
+  }: {
+    response: ServerResponse;
+    request: JsonRecord;
+    responseId: string;
+    previousResponseId: string | null;
+    startedAt: number;
+    createdAt: number;
+    context: CodexNativeApiRuntimeContext;
+    readiness: CodexNativeRuntimeReadiness;
+    continuationEntry: CodexNativeApiContinuationEntry | null;
+    prompt: string;
+    locale: string | null;
+    requestMetadata: JsonRecord | null;
+    internalEventMetadata: JsonRecord | undefined;
+    internalThreadMetadata: JsonRecord | null;
+    internalTaskClass: string | null;
+    effectiveModel: string | null;
+    effectiveCwd: string | null;
+    reasoningEffort: string | null;
+    serviceTier: string | null;
+  }): Promise<void> {
+    const initialNativeRuntime = buildRuntimeMetadata({
+      providerProfile: context.providerProfile,
+      readiness,
+      threadId: continuationEntry?.nativeThreadId ?? null,
+      turnId: continuationEntry?.nativeTurnId ?? null,
+      bridgeSessionId: continuationEntry?.bridgeSession.id ?? null,
+    });
+    const streamState = createResponsesStreamState({
+      request,
+      responseId,
+      createdAt,
+      responseModel: effectiveModel,
+      nativeRuntime: initialNativeRuntime,
+    });
+    let latestTurnMeta: {
+      threadId: string | null;
+      turnId: string | null;
+      bridgeSessionId: string | null;
+    } = {
+      threadId: continuationEntry?.nativeThreadId ?? null,
+      turnId: continuationEntry?.nativeTurnId ?? null,
+      bridgeSessionId: continuationEntry?.bridgeSession.id ?? null,
+    };
+
+    startSse(response);
+    const flushEvents = (events: JsonRecord[]) => {
+      for (const event of events) {
+        writeSseEvent(response, event);
+      }
+    };
+
+    try {
+      const execution = await this.executeResponsesTurn({
+        context,
+        continuationEntry,
+        responseId,
+        previousResponseId,
+        prompt,
+        locale,
+        requestMetadata,
+        internalEventMetadata,
+        internalThreadMetadata,
+        internalTaskClass,
+        effectiveModel,
+        effectiveCwd,
+        reasoningEffort,
+        serviceTier,
+        requestUser: normalizeNullableString(request.user),
+        onTurnStarted: (meta) => {
+          latestTurnMeta = {
+            threadId: meta.threadId,
+            turnId: meta.turnId,
+            bridgeSessionId: meta.bridgeSessionId,
+          };
+        },
+        onProgress: (progress) => {
+          flushEvents(appendResponsesStreamProgress(streamState, progress));
+        },
+      });
+      const outputText = rawString(execution.result.outputText);
+      const previewText = rawString(execution.result.previewText);
+      const effectiveText = outputText || previewText;
+      const nativeRuntime = buildRuntimeMetadata({
+        providerProfile: context.providerProfile,
+        readiness,
+        threadId: execution.result.threadId ?? execution.session.codexThreadId,
+        turnId: execution.result.turnId ?? latestTurnMeta.turnId,
+        bridgeSessionId: execution.session.id,
+      });
+      latestTurnMeta = {
+        threadId: execution.result.threadId ?? execution.session.codexThreadId,
+        turnId: execution.result.turnId ?? latestTurnMeta.turnId,
+        bridgeSessionId: execution.session.id,
+      };
+      if (!effectiveText) {
+        flushEvents(failResponsesStreamState(streamState, {
+          message: normalizeString(execution.result.errorMessage) || 'Codex native runtime returned no response text.',
+          type: 'native_runtime_error',
+        }, nativeRuntime));
+        finishSse(response);
+        return;
+      }
+      flushEvents(syncResponsesStreamMessageToTerminalText(streamState, effectiveText));
+      if (previousResponseId) {
+        this.continuationRegistry.touch(previousResponseId);
+      }
+      this.continuationRegistry.store({
+        responseId,
+        previousResponseId,
+        providerProfileId: context.providerProfile.id,
+        bridgeSession: execution.session,
+        nativeThreadId: execution.result.threadId ?? execution.session.codexThreadId,
+        nativeTurnId: execution.result.turnId ?? null,
+        activeAccountId: readiness.accountIdentity?.accountId ?? null,
+        model: effectiveModel,
+        routeKind: 'responses',
+        startedAt,
+        lastUsedAt: startedAt,
+      });
+      flushEvents(finishResponsesStreamState(streamState, {
+        status: outputText ? 'completed' : 'incomplete',
+        incompleteDetails: outputText ? null : {
+          reason: 'native_runtime_partial',
+        },
+        nativeRuntime,
+      }));
+      finishSse(response);
+    } catch (error) {
+      const nativeRuntime = buildRuntimeMetadata({
+        providerProfile: context.providerProfile,
+        readiness,
+        threadId: latestTurnMeta.threadId,
+        turnId: latestTurnMeta.turnId,
+        bridgeSessionId: latestTurnMeta.bridgeSessionId,
+      });
+      flushEvents(failResponsesStreamState(streamState, {
+        message: error instanceof Error ? error.message : String(error),
+        type: 'native_runtime_error',
+      }, nativeRuntime));
+      finishSse(response);
     }
   }
 
@@ -745,7 +1026,10 @@ function buildResponsesObject({
   createdAt,
   responseModel,
   status,
-  outputText,
+  outputText = null,
+  output = null,
+  error = null,
+  usage = null,
   incompleteDetails = null,
   nativeRuntime,
 }: {
@@ -754,33 +1038,41 @@ function buildResponsesObject({
   createdAt: number;
   responseModel: string | null;
   status: string;
-  outputText: string;
+  outputText?: string | null;
+  output?: JsonRecord[] | null;
+  error?: JsonRecord | null;
+  usage?: JsonRecord | null;
   incompleteDetails?: JsonRecord | null;
   nativeRuntime: JsonRecord;
 }): JsonRecord {
+  const normalizedOutput = Array.isArray(output)
+    ? output
+    : outputText
+      ? [{
+        id: `msg_${crypto.randomUUID()}`,
+        type: 'message',
+        status: status === 'completed' ? 'completed' : 'incomplete',
+        role: 'assistant',
+        content: [{
+          type: 'output_text',
+          text: outputText,
+          annotations: [],
+        }],
+      }]
+      : [];
   return omitUndefined({
     id: responseId,
     object: 'response',
     created_at: createdAt,
     status,
-    error: null,
+    error,
     incomplete_details: incompleteDetails,
     background: false,
     instructions: request.instructions ?? null,
     max_output_tokens: request.max_output_tokens ?? request.max_tokens ?? null,
     max_tool_calls: request.max_tool_calls ?? null,
     model: request.model ?? responseModel ?? null,
-    output: [{
-      id: `msg_${crypto.randomUUID()}`,
-      type: 'message',
-      status: status === 'completed' ? 'completed' : 'incomplete',
-      role: 'assistant',
-      content: [{
-        type: 'output_text',
-        text: outputText,
-        annotations: [],
-      }],
-    }],
+    output: normalizedOutput,
     parallel_tool_calls: request.parallel_tool_calls ?? true,
     previous_response_id: request.previous_response_id ?? null,
     prompt_cache_key: request.prompt_cache_key ?? null,
@@ -797,9 +1089,395 @@ function buildResponsesObject({
     truncation: request.truncation ?? 'disabled',
     user: request.user ?? null,
     metadata: request.metadata ?? null,
-    usage: null,
+    usage,
     native_runtime: nativeRuntime,
   });
+}
+
+function createResponsesStreamState({
+  request,
+  responseId,
+  createdAt,
+  responseModel,
+  nativeRuntime,
+}: {
+  request: JsonRecord;
+  responseId: string;
+  createdAt: number;
+  responseModel: string | null;
+  nativeRuntime: JsonRecord;
+}): ResponsesStreamState {
+  return {
+    request,
+    responseId,
+    createdAt,
+    responseModel,
+    initialNativeRuntime: nativeRuntime,
+    output: [],
+    reasoning: null,
+    message: null,
+    createdEmitted: false,
+    terminalEmitted: false,
+    nextOutputIndex: 0,
+    sequence: 0,
+  };
+}
+
+function ensureResponsesStreamStarted(state: ResponsesStreamState): JsonRecord[] {
+  if (state.createdEmitted) {
+    return [];
+  }
+  state.createdEmitted = true;
+  const response = buildResponsesObject({
+    request: state.request,
+    responseId: state.responseId,
+    createdAt: state.createdAt,
+    responseModel: state.responseModel,
+    status: 'in_progress',
+    output: [],
+    nativeRuntime: state.initialNativeRuntime,
+  });
+  return [
+    withResponsesStreamSequence(state, {
+      type: 'response.created',
+      response,
+    }),
+    withResponsesStreamSequence(state, {
+      type: 'response.in_progress',
+      response,
+    }),
+  ];
+}
+
+function appendResponsesStreamProgress(
+  state: ResponsesStreamState,
+  progress: ProviderTurnProgress,
+): JsonRecord[] {
+  const delta = rawString(progress.delta);
+  if (!delta) {
+    return [];
+  }
+  return normalizeString(progress.outputKind) === 'final_answer'
+    ? appendResponsesStreamMessageDelta(state, delta)
+    : appendResponsesStreamReasoningDelta(state, delta);
+}
+
+function appendResponsesStreamReasoningDelta(
+  state: ResponsesStreamState,
+  delta: string,
+): JsonRecord[] {
+  if (!delta) {
+    return [];
+  }
+  const events = ensureResponsesStreamStarted(state);
+  let reasoning = state.reasoning;
+  if (!reasoning) {
+    reasoning = {
+      id: `rs_${crypto.randomUUID()}`,
+      outputIndex: allocateResponsesStreamOutputIndex(state),
+      text: '',
+      added: false,
+      partAdded: false,
+      done: false,
+    };
+    state.reasoning = reasoning;
+    state.output.push({
+      id: reasoning.id,
+      type: 'reasoning',
+      status: 'in_progress',
+      summary: [],
+    });
+  }
+  if (!reasoning.added) {
+    reasoning.added = true;
+    events.push(withResponsesStreamSequence(state, {
+      type: 'response.output_item.added',
+      output_index: reasoning.outputIndex,
+      item: cloneJson(state.output[reasoning.outputIndex]),
+    }));
+  }
+  if (!reasoning.partAdded) {
+    reasoning.partAdded = true;
+    events.push(withResponsesStreamSequence(state, {
+      type: 'response.reasoning_summary_part.added',
+      item_id: reasoning.id,
+      output_index: reasoning.outputIndex,
+      summary_index: 0,
+      part: {
+        type: 'summary_text',
+        text: '',
+      },
+    }));
+  }
+  reasoning.text += delta;
+  events.push(withResponsesStreamSequence(state, {
+    type: 'response.reasoning_summary_text.delta',
+    item_id: reasoning.id,
+    output_index: reasoning.outputIndex,
+    summary_index: 0,
+    delta,
+  }));
+  return events;
+}
+
+function appendResponsesStreamMessageDelta(
+  state: ResponsesStreamState,
+  delta: string,
+): JsonRecord[] {
+  if (!delta) {
+    return [];
+  }
+  const events = ensureResponsesStreamStarted(state);
+  let message = state.message;
+  if (!message) {
+    message = {
+      id: `msg_${crypto.randomUUID()}`,
+      outputIndex: allocateResponsesStreamOutputIndex(state),
+      text: '',
+      added: false,
+      contentAdded: false,
+      done: false,
+    };
+    state.message = message;
+    state.output.push({
+      id: message.id,
+      type: 'message',
+      status: 'in_progress',
+      role: 'assistant',
+      content: [],
+    });
+  }
+  if (!message.added) {
+    message.added = true;
+    events.push(withResponsesStreamSequence(state, {
+      type: 'response.output_item.added',
+      output_index: message.outputIndex,
+      item: cloneJson(state.output[message.outputIndex]),
+    }));
+  }
+  if (!message.contentAdded) {
+    message.contentAdded = true;
+    events.push(withResponsesStreamSequence(state, {
+      type: 'response.content_part.added',
+      item_id: message.id,
+      output_index: message.outputIndex,
+      content_index: 0,
+      part: {
+        type: 'output_text',
+        text: '',
+        annotations: [],
+      },
+    }));
+  }
+  message.text += delta;
+  events.push(withResponsesStreamSequence(state, {
+    type: 'response.output_text.delta',
+    item_id: message.id,
+    output_index: message.outputIndex,
+    content_index: 0,
+    delta,
+  }));
+  return events;
+}
+
+function syncResponsesStreamMessageToTerminalText(
+  state: ResponsesStreamState,
+  text: string,
+): JsonRecord[] {
+  if (!text) {
+    return [];
+  }
+  const currentText = state.message?.text ?? '';
+  if (!currentText) {
+    return appendResponsesStreamMessageDelta(state, text);
+  }
+  if (text.startsWith(currentText)) {
+    return appendResponsesStreamMessageDelta(state, text.slice(currentText.length));
+  }
+  if (state.message) {
+    state.message.text = text;
+  }
+  return [];
+}
+
+function finishResponsesStreamState(
+  state: ResponsesStreamState,
+  {
+    status,
+    incompleteDetails = null,
+    nativeRuntime,
+  }: {
+    status: string;
+    incompleteDetails?: JsonRecord | null;
+    nativeRuntime: JsonRecord;
+  },
+): JsonRecord[] {
+  if (state.terminalEmitted) {
+    return [];
+  }
+  state.terminalEmitted = true;
+  return [
+    ...ensureResponsesStreamStarted(state),
+    ...finishOpenResponsesStreamItems(state),
+    withResponsesStreamSequence(state, {
+      type: 'response.completed',
+      response: buildResponsesObject({
+        request: state.request,
+        responseId: state.responseId,
+        createdAt: state.createdAt,
+        responseModel: state.responseModel,
+        status,
+        output: cloneJson(state.output),
+        incompleteDetails,
+        nativeRuntime,
+      }),
+    }),
+  ];
+}
+
+function failResponsesStreamState(
+  state: ResponsesStreamState,
+  error: JsonRecord,
+  nativeRuntime: JsonRecord,
+): JsonRecord[] {
+  if (state.terminalEmitted) {
+    return [];
+  }
+  state.terminalEmitted = true;
+  return [
+    ...ensureResponsesStreamStarted(state),
+    ...finishOpenResponsesStreamItems(state),
+    withResponsesStreamSequence(state, {
+      type: 'response.failed',
+      response: buildResponsesObject({
+        request: state.request,
+        responseId: state.responseId,
+        createdAt: state.createdAt,
+        responseModel: state.responseModel,
+        status: 'failed',
+        output: cloneJson(state.output),
+        error,
+        nativeRuntime,
+      }),
+    }),
+  ];
+}
+
+function finishOpenResponsesStreamItems(state: ResponsesStreamState): JsonRecord[] {
+  const closers: Array<{ outputIndex: number; run: () => JsonRecord[] }> = [];
+  if (state.reasoning && !state.reasoning.done) {
+    closers.push({
+      outputIndex: state.reasoning.outputIndex,
+      run: () => finishResponsesStreamReasoningState(state),
+    });
+  }
+  if (state.message && !state.message.done) {
+    closers.push({
+      outputIndex: state.message.outputIndex,
+      run: () => finishResponsesStreamMessageState(state),
+    });
+  }
+  closers.sort((left, right) => left.outputIndex - right.outputIndex);
+  const events: JsonRecord[] = [];
+  for (const closer of closers) {
+    events.push(...closer.run());
+  }
+  return events;
+}
+
+function finishResponsesStreamReasoningState(state: ResponsesStreamState): JsonRecord[] {
+  const reasoning = state.reasoning;
+  if (!reasoning || reasoning.done) {
+    return [];
+  }
+  reasoning.done = true;
+  const item = state.output[reasoning.outputIndex];
+  item.status = 'completed';
+  item.summary = reasoning.text
+    ? [{
+      type: 'summary_text',
+      text: reasoning.text,
+    }]
+    : [];
+  return [
+    withResponsesStreamSequence(state, {
+      type: 'response.reasoning_summary_text.done',
+      item_id: reasoning.id,
+      output_index: reasoning.outputIndex,
+      summary_index: 0,
+      text: reasoning.text,
+    }),
+    withResponsesStreamSequence(state, {
+      type: 'response.reasoning_summary_part.done',
+      item_id: reasoning.id,
+      output_index: reasoning.outputIndex,
+      summary_index: 0,
+      part: {
+        type: 'summary_text',
+        text: reasoning.text,
+      },
+    }),
+    withResponsesStreamSequence(state, {
+      type: 'response.output_item.done',
+      output_index: reasoning.outputIndex,
+      item: cloneJson(item),
+    }),
+  ];
+}
+
+function finishResponsesStreamMessageState(state: ResponsesStreamState): JsonRecord[] {
+  const message = state.message;
+  if (!message || message.done) {
+    return [];
+  }
+  message.done = true;
+  const item = state.output[message.outputIndex];
+  item.status = 'completed';
+  item.content = [{
+    type: 'output_text',
+    text: message.text,
+    annotations: [],
+  }];
+  return [
+    withResponsesStreamSequence(state, {
+      type: 'response.output_text.done',
+      item_id: message.id,
+      output_index: message.outputIndex,
+      content_index: 0,
+      text: message.text,
+    }),
+    withResponsesStreamSequence(state, {
+      type: 'response.content_part.done',
+      item_id: message.id,
+      output_index: message.outputIndex,
+      content_index: 0,
+      part: {
+        type: 'output_text',
+        text: message.text,
+        annotations: [],
+      },
+    }),
+    withResponsesStreamSequence(state, {
+      type: 'response.output_item.done',
+      output_index: message.outputIndex,
+      item: cloneJson(item),
+    }),
+  ];
+}
+
+function allocateResponsesStreamOutputIndex(state: ResponsesStreamState): number {
+  const index = state.nextOutputIndex;
+  state.nextOutputIndex += 1;
+  return index;
+}
+
+function withResponsesStreamSequence(state: ResponsesStreamState, payload: JsonRecord): JsonRecord {
+  const next = {
+    ...payload,
+    sequence_number: state.sequence,
+  };
+  state.sequence += 1;
+  return next;
 }
 
 function buildRuntimeMetadata({
@@ -912,11 +1590,39 @@ async function readJsonBody(request: IncomingMessage, maxBodyBytes: number): Pro
   }
 }
 
+function startSse(response: ServerResponse): void {
+  response.writeHead(200, {
+    'Content-Type': 'text/event-stream; charset=utf-8',
+    'Cache-Control': 'no-cache, no-transform',
+    Connection: 'keep-alive',
+    'X-Accel-Buffering': 'no',
+  });
+}
+
+function writeSseEvent(response: ServerResponse, payload: JsonRecord): void {
+  if (response.writableEnded || response.destroyed) {
+    return;
+  }
+  const eventName = normalizeString(payload.type) || 'message';
+  response.write(`event: ${eventName}\ndata: ${JSON.stringify(payload)}\n\n`);
+}
+
+function finishSse(response: ServerResponse): void {
+  if (response.writableEnded || response.destroyed) {
+    return;
+  }
+  response.end('data: [DONE]\n\n');
+}
+
 function writeJson(response: ServerResponse, status: number, body: JsonRecord): void {
   response.writeHead(status, {
     'Content-Type': 'application/json; charset=utf-8',
   });
   response.end(JSON.stringify(body));
+}
+
+function rawString(value: unknown): string {
+  return typeof value === 'string' ? value : '';
 }
 
 function normalizeString(value: unknown): string {
@@ -955,4 +1661,8 @@ function omitUndefined<T extends JsonRecord>(value: T): T {
   return Object.fromEntries(
     Object.entries(value).filter(([, entry]) => entry !== undefined),
   ) as T;
+}
+
+function cloneJson<T>(value: T): T {
+  return JSON.parse(JSON.stringify(value)) as T;
 }

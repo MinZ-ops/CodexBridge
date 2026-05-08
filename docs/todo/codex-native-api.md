@@ -215,6 +215,10 @@ Upstream:
     auth resolution and optional bearer-auth policy as other `/v1/*` routes, so
     readiness output reflects current reconnect/account-switch state instead of
     a startup snapshot.
+17. Native-api streaming must flow through the native runtime's
+    `onTurnStarted` + `onProgress` hooks and emit SSE from that contract,
+    instead of polling thread history or inventing a second streaming
+    transport beside the logged-in Codex app-server path.
 
 ## Ordered Executable Sequence
 
@@ -450,9 +454,15 @@ Implementation checklist:
   - surfaces continuation-registry durability metadata and current route
     capability flags for local debugging
   - stays behind the same optional bearer-auth policy as other `/v1/*` routes
-- [ ] Add streaming Responses output only after the native runtime exposes a
-  stable server-facing stream contract instead of forcing the current
+- [x] Add streaming Responses output once the native runtime exposes a stable
+  server-facing stream contract instead of forcing the current
   final-result-only `startTurn()` boundary to pretend it can stream
+  - `src/providers/codex/native_runtime.ts` now forwards isolated-turn
+    `onTurnStarted` + `onProgress` hooks as the first server-facing streaming
+    contract over the existing native execution primitive
+  - `src/providers/codex/native_api_server.ts` now serves SSE for
+    `POST /v1/responses` when `stream: true`, while keeping
+    `POST /v1/responses/compact` unsupported
 - [ ] Decide the first compatibility slice beyond Responses-first:
   - likely `POST /v1/chat/completions`
   - keep `POST /v1/responses/compact` explicitly unsupported until that
@@ -633,9 +643,11 @@ Only after:
   - returns current native-runtime readiness, account identity, continuation
     registry durability, and route capability flags without requiring a server
     restart after reconnect/account switches
-- [ ] Add streaming Responses output once the native runtime exposes a stable
+- [x] Add streaming Responses output once the native runtime exposes a stable
   server-facing stream contract for localhost callers
-- [ ] Add regression coverage for:
+  - landed via native-runtime `onTurnStarted` / `onProgress` forwarding plus
+    SSE `stream: true` support in `src/providers/codex/native_api_server.ts`
+- [ ] Keep expanding regression coverage for:
   - continuation mapping
   - streaming event ordering
   - local auth / localhost-only assumptions
@@ -672,8 +684,9 @@ Phase 1 should be considered complete when all of the following are true:
   than inventing a second execution engine
 - the main WeChat chat flow remains on the current direct app-server path
 - no external provider API key is required for this path
-- streaming remains explicitly unsupported with a clear error until later
-  hardening lands on a stable native-runtime stream contract
+- streaming may remain unsupported in the minimal Phase 1 shell, but any later
+  support must sit on a stable native-runtime stream contract rather than ad
+  hoc polling or a second execution engine
 
 ## Completion Criteria
 

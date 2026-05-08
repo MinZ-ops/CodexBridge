@@ -8,6 +8,7 @@ import type { InboundTextEvent } from '../../types/platform.js';
 import type {
   ProviderPluginContract,
   ProviderProfile,
+  ProviderTurnProgress,
   ProviderTurnResult,
 } from '../../types/provider.js';
 
@@ -38,6 +39,17 @@ export interface CodexNativeRuntimeTurnResult {
   request: CodexNativeRuntimeTurnPreparation;
 }
 
+export interface CodexNativeRuntimeTurnStartedMeta {
+  threadId: string;
+  turnId: string | null;
+  bridgeSessionId: string;
+}
+
+export interface CodexNativeRuntimeTurnHooks {
+  onProgress?: ((progress: ProviderTurnProgress) => Promise<void> | void) | null;
+  onTurnStarted?: ((meta: CodexNativeRuntimeTurnStartedMeta) => Promise<void> | void) | null;
+}
+
 export interface CodexNativeRuntimeReconnectResult {
   connected: boolean;
   accountIdentity: CodexAuthIdentity | null;
@@ -58,10 +70,22 @@ export interface CodexNativeRuntimeReconnectSummary {
   results: CodexNativeRuntimeReconnectSummaryEntry[];
 }
 
-export interface CodexNativeRuntimeContinuationTurnOptions {
+export interface CodexNativeRuntimeContinuationTurnOptions extends CodexNativeRuntimeTurnHooks {
   providerProfile: ProviderProfile;
   providerPlugin: ProviderPluginContract;
   bridgeSession: BridgeSession;
+  model?: string | null;
+  reasoningEffort?: string | null;
+  serviceTier?: string | null;
+  prepareTurn: (session: BridgeSession) => CodexNativeRuntimeTurnPreparation;
+}
+
+export interface CodexNativeRuntimeRunTurnOptions extends CodexNativeRuntimeTurnHooks {
+  providerProfile: ProviderProfile;
+  providerPlugin: ProviderPluginContract;
+  cwd?: string | null;
+  title: string;
+  metadata?: Record<string, unknown>;
   model?: string | null;
   reasoningEffort?: string | null;
   serviceTier?: string | null;
@@ -240,17 +264,9 @@ export class CodexNativeRuntime {
     reasoningEffort = null,
     serviceTier = null,
     prepareTurn,
-  }: {
-    providerProfile: ProviderProfile;
-    providerPlugin: ProviderPluginContract;
-    cwd?: string | null;
-    title: string;
-    metadata?: Record<string, unknown>;
-    model?: string | null;
-    reasoningEffort?: string | null;
-    serviceTier?: string | null;
-    prepareTurn: (session: BridgeSession) => CodexNativeRuntimeTurnPreparation;
-  }): Promise<CodexNativeRuntimeTurnResult> {
+    onProgress = null,
+    onTurnStarted = null,
+  }: CodexNativeRuntimeRunTurnOptions): Promise<CodexNativeRuntimeTurnResult> {
     this.assertSupportsIsolatedTurns(providerPlugin);
     const session = await this.createIsolatedSession({
       providerProfile,
@@ -267,6 +283,8 @@ export class CodexNativeRuntime {
       reasoningEffort,
       serviceTier,
       prepareTurn,
+      onProgress,
+      onTurnStarted,
     });
   }
 
@@ -278,6 +296,8 @@ export class CodexNativeRuntime {
     reasoningEffort = null,
     serviceTier = null,
     prepareTurn,
+    onProgress = null,
+    onTurnStarted = null,
   }: CodexNativeRuntimeContinuationTurnOptions): Promise<CodexNativeRuntimeTurnResult> {
     this.assertSupportsIsolatedTurns(providerPlugin);
     const session: BridgeSession = {
@@ -293,6 +313,8 @@ export class CodexNativeRuntime {
       reasoningEffort,
       serviceTier,
       prepareTurn,
+      onProgress,
+      onTurnStarted,
     });
   }
 
@@ -304,6 +326,8 @@ export class CodexNativeRuntime {
     reasoningEffort = null,
     serviceTier = null,
     prepareTurn,
+    onProgress = null,
+    onTurnStarted = null,
   }: {
     providerProfile: ProviderProfile;
     providerPlugin: ProviderPluginContract;
@@ -312,6 +336,8 @@ export class CodexNativeRuntime {
     reasoningEffort?: string | null;
     serviceTier?: string | null;
     prepareTurn: (session: BridgeSession) => CodexNativeRuntimeTurnPreparation;
+    onProgress?: ((progress: ProviderTurnProgress) => Promise<void> | void) | null;
+    onTurnStarted?: ((meta: CodexNativeRuntimeTurnStartedMeta) => Promise<void> | void) | null;
   }): Promise<CodexNativeRuntimeTurnResult> {
     const request = prepareTurn(session);
     const sessionSettings = this.buildIsolatedSessionSettings(session, {
@@ -332,6 +358,22 @@ export class CodexNativeRuntime {
       sessionSettings,
       event: request.event,
       inputText: request.inputText,
+      onProgress,
+      onTurnStarted: typeof onTurnStarted === 'function'
+        ? async (meta) => {
+          const threadId = typeof meta?.threadId === 'string' && meta.threadId.trim()
+            ? meta.threadId.trim()
+            : session.codexThreadId;
+          const turnId = typeof meta?.turnId === 'string' && meta.turnId.trim()
+            ? meta.turnId.trim()
+            : null;
+          await onTurnStarted({
+            threadId,
+            turnId,
+            bridgeSessionId: session.id,
+          });
+        }
+        : null,
     });
     return {
       session,

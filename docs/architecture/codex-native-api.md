@@ -336,6 +336,7 @@ First shell constraints:
 - reject `previous_response_id` until the continuation registry exists instead
   of inventing a fake continuation path early
 - allow streaming to remain explicitly unsupported until a later hardening pass
+  adds SSE over the native runtime's `onTurnStarted` / `onProgress` contract
 - keep long-running localhost startup independently launchable from WeChat or
   Telegram bridge runtime so the API shell can act as a standalone local
   service before any package extraction
@@ -396,7 +397,8 @@ Build:
 
 - request-scoped `GET /v1/health` over readiness/account/continuation-registry
   state for local debugging and liveness checks
-- streaming hardening
+- streaming hardening over the native runtime's `onTurnStarted` /
+  `onProgress` contract instead of thread-history polling
 - trace/debug/health endpoints or equivalents
 - restart/recovery behavior
 - optional `Chat Completions` compatibility

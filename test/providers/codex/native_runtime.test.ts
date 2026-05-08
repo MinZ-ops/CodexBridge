@@ -147,6 +147,85 @@ test('CodexNativeRuntime continueIsolatedTurn reuses an existing isolated bridge
   assert.equal(execution.result.turnId, 'turn-native-continued-1');
 });
 
+test('CodexNativeRuntime exposes turn-start and progress hooks for server-facing streaming', async () => {
+  const progressUpdates: Array<{ text: string; delta: string; outputKind: string }> = [];
+  const turnStarted: Array<{ threadId: string; turnId: string | null; bridgeSessionId: string }> = [];
+  const runtime = new CodexNativeRuntime({
+    now: () => 654321,
+    createSessionId: () => 'session-native-stream-1',
+  });
+  const providerPlugin = {
+    async startThread() {
+      return {
+        threadId: 'thread-native-stream-1',
+        cwd: '/tmp/native-stream',
+        title: 'Native Stream',
+      };
+    },
+    async startTurn(params: any) {
+      await params.onTurnStarted?.({
+        threadId: params.bridgeSession.codexThreadId,
+        turnId: 'turn-native-stream-1',
+      });
+      await params.onProgress?.({
+        text: 'Thinking aloud.',
+        delta: 'Thinking aloud.',
+        outputKind: 'commentary',
+      });
+      await params.onProgress?.({
+        text: 'Final answer.',
+        delta: 'Final answer.',
+        outputKind: 'final_answer',
+      });
+      return {
+        outputText: 'Final answer.',
+        previewText: '',
+        threadId: params.bridgeSession.codexThreadId,
+        turnId: 'turn-native-stream-1',
+      };
+    },
+  } as any;
+
+  await runtime.runIsolatedTurn({
+    providerProfile: makeProfile(),
+    providerPlugin,
+    cwd: '/tmp/native-stream',
+    title: 'Native Stream',
+    prepareTurn: (session) => ({
+      inputText: 'stream this turn',
+      event: {
+        platform: 'codex-native-api',
+        externalScopeId: 'resp_stream_native_1',
+        text: 'stream this turn',
+        cwd: session.cwd,
+        locale: 'en-US',
+        attachments: [],
+      },
+    }),
+    onTurnStarted: (meta) => {
+      turnStarted.push(meta);
+    },
+    onProgress: (progress) => {
+      progressUpdates.push(progress);
+    },
+  });
+
+  assert.deepEqual(turnStarted, [{
+    threadId: 'thread-native-stream-1',
+    turnId: 'turn-native-stream-1',
+    bridgeSessionId: 'session-native-stream-1',
+  }]);
+  assert.deepEqual(progressUpdates, [{
+    text: 'Thinking aloud.',
+    delta: 'Thinking aloud.',
+    outputKind: 'commentary',
+  }, {
+    text: 'Final answer.',
+    delta: 'Final answer.',
+    outputKind: 'final_answer',
+  }]);
+});
+
 test('CodexNativeRuntime checkReadiness reports account identity and model probe status', async () => {
   const runtime = new CodexNativeRuntime({
     now: () => 222,
