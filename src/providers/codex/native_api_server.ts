@@ -171,6 +171,10 @@ export class CodexNativeApiServer {
     if (url.pathname.startsWith('/v1/') && !this.authorize(request, response)) {
       return;
     }
+    if (request.method === 'GET' && url.pathname === '/v1/health') {
+      await this.handleHealth(response);
+      return;
+    }
     if (request.method === 'GET' && url.pathname === '/v1/models') {
       await this.handleModels(response);
       return;
@@ -226,6 +230,40 @@ export class CodexNativeApiServer {
       },
     });
     return false;
+  }
+
+  private async handleHealth(response: ServerResponse): Promise<void> {
+    const context = await this.resolveRuntimeContext();
+    const readiness = await this.runtime.checkReadiness({
+      providerProfile: context.providerProfile,
+      providerPlugin: context.providerPlugin,
+      authPathOrOptions: context.authPathOrOptions ?? {},
+    });
+    const ready = readiness.ready && readiness.runtimeReachable;
+    writeJson(response, ready ? 200 : 503, {
+      object: 'health.check',
+      status: ready ? 'ok' : (readiness.runtimeReachable ? 'degraded' : 'unavailable'),
+      localhost_only: true,
+      route_capabilities: {
+        models: {
+          get: true,
+        },
+        responses: {
+          create: true,
+          continuation: true,
+          stream: false,
+          compact: false,
+        },
+        chat_completions: {
+          create: false,
+        },
+      },
+      continuation_registry: serializeContinuationRegistryDescriptor(this.continuationRegistry.describe()),
+      native_runtime: buildRuntimeMetadata({
+        providerProfile: context.providerProfile,
+        readiness,
+      }),
+    });
   }
 
   private async handleModels(response: ServerResponse): Promise<void> {

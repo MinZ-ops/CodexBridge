@@ -70,6 +70,122 @@ test('CodexNativeApiServer exposes /v1/models with runtime metadata', async () =
   }
 });
 
+test('CodexNativeApiServer exposes /v1/health with request-scoped readiness and route metadata', async () => {
+  const runtime = new CodexNativeRuntime({
+    now: () => 444,
+    readAccountIdentity: () => ({
+      email: 'native@example.com',
+      name: 'Native Runtime',
+      authMode: 'chatgpt',
+      accountId: 'acc_native',
+      plan: 'plus',
+      authPath: '/tmp/auth.json',
+    }),
+  });
+  const providerPlugin = {
+    async listModels() {
+      return [{
+        id: 'gpt-5.4',
+        model: 'gpt-5.4',
+        displayName: 'GPT-5.4',
+        description: 'Frontier coding model.',
+        isDefault: true,
+        supportedReasoningEfforts: ['medium', 'high'],
+        defaultReasoningEffort: 'medium',
+      }];
+    },
+    async startThread() {
+      return {
+        threadId: 'thread-health-1',
+        cwd: '/tmp',
+        title: 'health',
+      };
+    },
+    async startTurn() {
+      return {
+        outputText: 'ok',
+        previewText: '',
+        threadId: 'thread-health-1',
+        turnId: 'turn-health-1',
+      };
+    },
+  } as any;
+  const server = new CodexNativeApiServer({
+    runtime,
+    resolveRuntimeContext: () => ({
+      providerProfile: makeProfile(),
+      providerPlugin,
+    }),
+  });
+  await server.start();
+  try {
+    const response = await fetch(`${server.baseUrl}/v1/health`);
+    const body = await response.json() as any;
+    assert.equal(response.status, 200);
+    assert.equal(body.object, 'health.check');
+    assert.equal(body.status, 'ok');
+    assert.equal(body.localhost_only, true);
+    assert.equal(body.route_capabilities.responses.create, true);
+    assert.equal(body.route_capabilities.responses.continuation, true);
+    assert.equal(body.route_capabilities.responses.stream, false);
+    assert.equal(body.route_capabilities.responses.compact, false);
+    assert.equal(body.route_capabilities.chat_completions.create, false);
+    assert.equal(body.continuation_registry.kind, 'in_memory');
+    assert.equal(body.continuation_registry.persistence, 'in_process');
+    assert.equal(body.native_runtime.ready, true);
+    assert.equal(body.native_runtime.provider_profile_id, 'openai-default');
+    assert.equal(body.native_runtime.account_identity.account_id, 'acc_native');
+  } finally {
+    await server.stop();
+  }
+});
+
+test('CodexNativeApiServer reports degraded /v1/health when the native auth state is unavailable', async () => {
+  const runtime = new CodexNativeRuntime({
+    now: () => 555,
+    readAccountIdentity: () => null,
+  });
+  const providerPlugin = {
+    async listModels() {
+      return [];
+    },
+    async startThread() {
+      return {
+        threadId: 'thread-health-2',
+        cwd: '/tmp',
+        title: 'health',
+      };
+    },
+    async startTurn() {
+      return {
+        outputText: 'ok',
+        previewText: '',
+        threadId: 'thread-health-2',
+        turnId: 'turn-health-2',
+      };
+    },
+  } as any;
+  const server = new CodexNativeApiServer({
+    runtime,
+    resolveRuntimeContext: () => ({
+      providerProfile: makeProfile(),
+      providerPlugin,
+    }),
+  });
+  await server.start();
+  try {
+    const response = await fetch(`${server.baseUrl}/v1/health`);
+    const body = await response.json() as any;
+    assert.equal(response.status, 503);
+    assert.equal(body.status, 'degraded');
+    assert.equal(body.native_runtime.runtime_reachable, true);
+    assert.equal(body.native_runtime.ready, false);
+    assert.match(body.native_runtime.error_message, /auth state is unavailable/i);
+  } finally {
+    await server.stop();
+  }
+});
+
 test('CodexNativeApiServer routes /v1/responses through isolated native runtime execution', async () => {
   const calls: Array<{ kind: string; payload: any }> = [];
   const runtime = new CodexNativeRuntime({
@@ -482,6 +598,11 @@ test('CodexNativeApiServer enforces optional bearer auth on localhost routes', a
   });
   await server.start();
   try {
+    const unauthorizedHealth = await fetch(`${server.baseUrl}/v1/health`);
+    const unauthorizedHealthBody = await unauthorizedHealth.json() as any;
+    assert.equal(unauthorizedHealth.status, 401);
+    assert.equal(unauthorizedHealthBody.error.code, 'invalid_auth_token');
+
     const unauthorized = await fetch(`${server.baseUrl}/v1/models`);
     const unauthorizedBody = await unauthorized.json() as any;
     assert.equal(unauthorized.status, 401);

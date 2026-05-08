@@ -394,6 +394,8 @@ Borrow mainly from:
 
 Build:
 
+- request-scoped `GET /v1/health` over readiness/account/continuation-registry
+  state for local debugging and liveness checks
 - streaming hardening
 - trace/debug/health endpoints or equivalents
 - restart/recovery behavior
@@ -464,6 +466,7 @@ Owns:
 - localhost HTTP routing
 - request parsing
 - streaming response emission
+- request-scoped health/debug response emission
 - auth/binding policy for the local surface
 
 ### 2. Native API router/classifier

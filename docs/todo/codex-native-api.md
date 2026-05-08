@@ -211,6 +211,10 @@ Upstream:
     through one module-local native-api side-task router instead of issuing ad
     hoc localhost fetches at each call site; that router owns task-class
     eligibility, localhost auth/binding, and direct-native fallback.
+16. Localhost health/debug routes must reuse the same request-scoped provider /
+    auth resolution and optional bearer-auth policy as other `/v1/*` routes, so
+    readiness output reflects current reconnect/account-switch state instead of
+    a startup snapshot.
 
 ## Ordered Executable Sequence
 
@@ -438,6 +442,22 @@ Completion target:
 - Codex Native API becomes a reusable and debuggable long-running local service
   rather than a one-off adapter
 
+Implementation checklist:
+
+- [x] Add a request-scoped localhost health/debug endpoint:
+  - `GET /v1/health`
+  - reuses `CodexNativeRuntime.checkReadiness()` instead of duplicating probes
+  - surfaces continuation-registry durability metadata and current route
+    capability flags for local debugging
+  - stays behind the same optional bearer-auth policy as other `/v1/*` routes
+- [ ] Add streaming Responses output only after the native runtime exposes a
+  stable server-facing stream contract instead of forcing the current
+  final-result-only `startTurn()` boundary to pretend it can stream
+- [ ] Decide the first compatibility slice beyond Responses-first:
+  - likely `POST /v1/chat/completions`
+  - keep `POST /v1/responses/compact` explicitly unsupported until that
+    compatibility/hardening work justifies a second response shape
+
 ## Routing Priority
 
 Target routing priority:
@@ -569,7 +589,6 @@ Only after:
 
 - [x] Expose `GET /v1/models`
 - [x] Expose `POST /v1/responses`
-- [ ] Support streaming Responses output
 - [x] Map Codex-native continuation/thread semantics to `response_id` /
   `previous_response_id`
 - [x] Bind localhost only by default
@@ -609,6 +628,13 @@ Only after:
 
 ### Phase 4: Hardening
 
+- [x] Add a request-scoped localhost health/debug endpoint:
+  - `GET /v1/health`
+  - returns current native-runtime readiness, account identity, continuation
+    registry durability, and route capability flags without requiring a server
+    restart after reconnect/account switches
+- [ ] Add streaming Responses output once the native runtime exposes a stable
+  server-facing stream contract for localhost callers
 - [ ] Add regression coverage for:
   - continuation mapping
   - streaming event ordering
@@ -641,12 +667,13 @@ Phase 1 should be considered complete when all of the following are true:
 
 - localhost `GET /v1/models` works against logged-in Codex runtime state
 - localhost `POST /v1/responses` can create isolated runs
-- streaming works for those isolated runs
 - `previous_response_id` can resume through the continuation registry
 - the API path reuses the same proven local isolated execution primitive rather
   than inventing a second execution engine
 - the main WeChat chat flow remains on the current direct app-server path
 - no external provider API key is required for this path
+- streaming remains explicitly unsupported with a clear error until later
+  hardening lands on a stable native-runtime stream contract
 
 ## Completion Criteria
 
