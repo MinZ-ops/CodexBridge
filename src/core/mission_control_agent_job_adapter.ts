@@ -1,5 +1,6 @@
 import {
   MissionWorkflowLoader,
+  buildDefaultImmutablePrompt,
   createMissionStopRequest,
   createMission,
   createMissionAttemptPromptContract,
@@ -161,6 +162,11 @@ export function createMissionControlledAgentJobView(job: AgentJob): AgentJob {
     title: compactString(mission.title) ?? job.title,
     goal: compactString(mission.goal) ?? job.goal,
     expectedOutput: compactString(mission.expectedOutput) ?? job.expectedOutput,
+    acceptanceCriteria: mission.acceptanceCriteria.length > 0
+      ? [...mission.acceptanceCriteria]
+      : resolveAgentAcceptanceCriteria(job),
+    immutablePrompt: compactString(mission.immutablePrompt) ?? resolveAgentImmutablePrompt(job),
+    loopPolicy: normalizeLoopPolicySnapshot(mission.loopPolicy, job),
     plan: mission.plan.length > 0 ? [...mission.plan] : [...job.plan],
     riskLevel: mission.riskLevel ?? job.riskLevel,
     providerProfileId: compactString(mission.providerProfileId) ?? job.providerProfileId,
@@ -257,7 +263,10 @@ export function createFreshMissionRuntimeStateForAgentJob(
     title: job.title,
     goal: job.goal,
     expectedOutput: job.expectedOutput,
-    acceptanceCriteria: job.expectedOutput ? [job.expectedOutput] : [],
+    immutableGoal: job.goal,
+    immutablePrompt: resolveAgentImmutablePrompt(job),
+    loopPolicy: resolveAgentLoopPolicy(job),
+    acceptanceCriteria: resolveAgentAcceptanceCriteria(job),
     plan: [...job.plan],
     riskLevel: job.riskLevel,
     cwd: job.cwd,
@@ -486,6 +495,7 @@ function createMissionFromAgentJob(
   const summary = job.missionWorkpadFinalResultSummary
     ?? job.lastResultPreview
     ?? null;
+  const loopPolicy = resolveAgentLoopPolicy(job);
   const mission = normalizeMissionRecord({
     id: job.id,
     workItemId: `${job.id}:work-item`,
@@ -495,20 +505,8 @@ function createMissionFromAgentJob(
     externalScopeId: job.externalScopeId,
     title: job.title,
     immutableGoal: job.goal,
-    immutablePrompt: [
-      `Mission title: ${job.title}`,
-      'Immutable goal:',
-      job.goal,
-      '',
-      'Expected output:',
-      job.expectedOutput,
-    ].join('\n'),
-    loopPolicy: {
-      maxAttempts: job.maxAttempts,
-      maxTurns: 1,
-      maxCycles: null,
-      maxNoProgressCycles: null,
-    },
+    immutablePrompt: resolveAgentImmutablePrompt(job),
+    loopPolicy,
     activeGenerationId: `${job.id}:generation:1`,
     activeGenerationIndex: 1,
     generationCount: 1,
@@ -516,7 +514,7 @@ function createMissionFromAgentJob(
     currentChecklistSnapshotVersion: 1,
     goal: job.goal,
     expectedOutput: job.expectedOutput,
-    acceptanceCriteria: [],
+    acceptanceCriteria: resolveAgentAcceptanceCriteria(job),
     plan: [...job.plan],
     status: mapAgentStatusToMissionStatus(job.status, job.running),
     priority: 'normal',
@@ -533,8 +531,8 @@ function createMissionFromAgentJob(
     codexThreadId: null,
     activeAttemptId: null,
     attemptCount: job.attemptCount,
-    maxAttempts: job.maxAttempts,
-    maxTurns: 1,
+    maxAttempts: loopPolicy.maxAttempts ?? job.maxAttempts,
+    maxTurns: loopPolicy.maxTurns ?? 8,
     lastRunAt: job.lastRunAt,
     completedAt: job.completedAt,
     archivedAt: null,
@@ -817,6 +815,49 @@ function summarizeMissionPreview(value: string | null, artifacts: unknown[]): st
   }
   const artifactCount = Array.isArray(artifacts) ? artifacts.length : 0;
   return artifactCount > 0 ? `attachments: ${artifactCount}` : null;
+}
+
+function resolveAgentAcceptanceCriteria(job: AgentJob): string[] {
+  const criteria = Array.isArray(job.acceptanceCriteria)
+    ? job.acceptanceCriteria.map((item) => String(item ?? '').trim()).filter(Boolean).slice(0, 8)
+    : [];
+  return criteria.length > 0
+    ? criteria
+    : ['Provide verifiable results and note any remaining risks or blockers.'];
+}
+
+function resolveAgentImmutablePrompt(job: AgentJob): string {
+  return compactString(job.immutablePrompt) ?? buildDefaultImmutablePrompt({
+    title: job.title,
+    goal: job.goal,
+    expectedOutput: job.expectedOutput,
+    plan: job.plan,
+  });
+}
+
+function resolveAgentLoopPolicy(job: AgentJob) {
+  return normalizeLoopPolicySnapshot(job.loopPolicy ?? null, job);
+}
+
+function normalizeLoopPolicySnapshot(
+  value: AgentJob['loopPolicy'] | Mission['loopPolicy'] | null | undefined,
+  job: AgentJob,
+) {
+  const policy = value && typeof value === 'object' ? value : null;
+  return {
+    maxAttempts: normalizeLoopBudget(policy?.maxAttempts, job.maxAttempts),
+    maxTurns: normalizeLoopBudget(policy?.maxTurns, 8),
+    maxCycles: normalizeLoopBudget(policy?.maxCycles, null),
+    maxNoProgressCycles: normalizeLoopBudget(policy?.maxNoProgressCycles, 3),
+  };
+}
+
+function normalizeLoopBudget(value: unknown, fallback: number | null): number | null {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  const normalized = Number(value);
+  return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
 }
 
 function compactString(value: unknown): string | null {

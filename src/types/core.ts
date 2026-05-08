@@ -180,6 +180,13 @@ export type AgentJobRiskLevel = 'low' | 'medium' | 'high';
 
 export type AgentJobMode = 'codex' | 'agents' | 'hybrid';
 
+export interface AgentJobLoopPolicy {
+  maxAttempts?: number | null;
+  maxTurns?: number | null;
+  maxCycles?: number | null;
+  maxNoProgressCycles?: number | null;
+}
+
 export type AgentJobStatus =
   | 'awaiting_checklist_confirm'
   | 'awaiting_prompt_confirm'
@@ -231,6 +238,9 @@ export interface AgentJob {
   originalInput: string;
   goal: string;
   expectedOutput: string;
+  acceptanceCriteria?: string[];
+  immutablePrompt?: string | null;
+  loopPolicy?: AgentJobLoopPolicy | null;
   plan: string[];
   category: AgentJobCategory;
   riskLevel: AgentJobRiskLevel;

@@ -27,6 +27,7 @@ import type {
   AgentJob,
   AgentJobAttemptHistoryEntry,
   AgentJobCategory,
+  AgentJobLoopPolicy,
   AgentJobMode,
   AgentJobRiskLevel,
   AgentJobStatus,
@@ -170,6 +171,9 @@ export class AgentJobService {
     originalInput: string;
     goal: string;
     expectedOutput: string;
+    acceptanceCriteria?: string[] | null;
+    immutablePrompt?: string | null;
+    loopPolicy?: AgentJobLoopPolicy | null;
     plan: string[];
     category: AgentJobCategory;
     riskLevel: AgentJobRiskLevel;
@@ -189,6 +193,9 @@ export class AgentJobService {
       originalInput: String(params.originalInput ?? '').trim(),
       goal: String(params.goal ?? '').trim(),
       expectedOutput: String(params.expectedOutput ?? '').trim(),
+      acceptanceCriteria: normalizeAcceptanceCriteria(params.acceptanceCriteria),
+      immutablePrompt: normalizeNullableString(params.immutablePrompt),
+      loopPolicy: normalizeLoopPolicy(params.loopPolicy, params.maxAttempts ?? 2),
       plan: normalizePlan(params.plan),
       category: normalizeCategory(params.category),
       riskLevel: normalizeRiskLevel(params.riskLevel),
@@ -200,7 +207,7 @@ export class AgentJobService {
       status: 'queued',
       running: false,
       stopRequested: false,
-      maxAttempts: clampAttempts(params.maxAttempts ?? 2),
+      maxAttempts: clampAttempts(params.loopPolicy?.maxAttempts ?? params.maxAttempts ?? 2),
       attemptCount: 0,
       lastRunAt: null,
       completedAt: null,
@@ -272,9 +279,23 @@ export class AgentJobService {
 
   updateJob(id: string, updates: Partial<AgentJob>): AgentJob {
     const current = this.requireById(id);
+    const normalizedLoopPolicy = hasOwn(updates, 'loopPolicy')
+      ? normalizeLoopPolicy(updates.loopPolicy ?? current.loopPolicy ?? null, updates.maxAttempts ?? current.maxAttempts)
+      : normalizeLoopPolicy(current.loopPolicy ?? null, current.maxAttempts);
+    const normalizedMaxAttempts = clampAttempts(
+      normalizedLoopPolicy?.maxAttempts ?? updates.maxAttempts ?? current.maxAttempts,
+    );
     const next: AgentJob = {
       ...current,
       ...updates,
+      acceptanceCriteria: hasOwn(updates, 'acceptanceCriteria')
+        ? normalizeAcceptanceCriteria(updates.acceptanceCriteria ?? [])
+        : normalizeAcceptanceCriteria(current.acceptanceCriteria),
+      immutablePrompt: hasOwn(updates, 'immutablePrompt')
+        ? normalizeNullableString(updates.immutablePrompt)
+        : normalizeNullableString(current.immutablePrompt),
+      loopPolicy: normalizedLoopPolicy,
+      maxAttempts: normalizedMaxAttempts,
       plan: updates.plan ? normalizePlan(updates.plan) : current.plan,
       missionAttemptHistory: hasOwn(updates, 'missionAttemptHistory')
         ? normalizeAttemptHistory(updates.missionAttemptHistory ?? [])
@@ -691,7 +712,7 @@ export class AgentJobService {
           title: job.title,
           goal: job.goal,
           expectedOutput: job.expectedOutput,
-          acceptanceCriteria: job.expectedOutput ? [job.expectedOutput] : [],
+          acceptanceCriteria: normalizeAcceptanceCriteria(job.acceptanceCriteria),
           plan: [...job.plan],
           metadata: {
             category: job.category,
@@ -707,6 +728,9 @@ export class AgentJobService {
         workflowPath: job.missionWorkflowPath,
         bridgeSessionId: job.bridgeSessionId,
         codexThreadId: this.getSession(job)?.codexThreadId ?? null,
+        immutableGoal: job.goal,
+        immutablePrompt: normalizeNullableString(job.immutablePrompt),
+        loopPolicy: normalizeLoopPolicy(job.loopPolicy ?? null, job.maxAttempts),
         maxAttempts: job.maxAttempts,
         maxTurns: 8,
         initialStatus: 'draft',
@@ -887,6 +911,46 @@ function normalizeNullableNumber(value: unknown): number | null {
 
 export function formatAgentStatus(status: AgentJobStatus, running: boolean): AgentJobStatus | 'running' {
   return running ? 'running' : status;
+}
+
+function normalizeAcceptanceCriteria(value: string[] | null | undefined): string[] {
+  const items = Array.isArray(value) ? value : [];
+  const normalized = items
+    .map((line) => String(line ?? '').trim())
+    .filter(Boolean)
+    .slice(0, 8);
+  return normalized.length > 0
+    ? normalized
+    : ['Provide verifiable results and note any remaining risks or blockers.'];
+}
+
+function normalizeLoopPolicy(
+  value: AgentJobLoopPolicy | null | undefined,
+  fallbackMaxAttempts: number,
+): AgentJobLoopPolicy | null {
+  const policy = value && typeof value === 'object' ? value : null;
+  if (!policy) {
+    return {
+      maxAttempts: fallbackMaxAttempts,
+      maxTurns: 8,
+      maxCycles: null,
+      maxNoProgressCycles: 3,
+    };
+  }
+  return {
+    maxAttempts: normalizeLoopBudget(policy.maxAttempts, fallbackMaxAttempts),
+    maxTurns: normalizeLoopBudget(policy.maxTurns, 8),
+    maxCycles: normalizeLoopBudget(policy.maxCycles, null),
+    maxNoProgressCycles: normalizeLoopBudget(policy.maxNoProgressCycles, 3),
+  };
+}
+
+function normalizeLoopBudget(value: unknown, fallback: number | null): number | null {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  const normalized = Number(value);
+  return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
 }
 
 function normalizePlan(value: string[]): string[] {

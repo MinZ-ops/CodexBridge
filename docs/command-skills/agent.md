@@ -206,7 +206,15 @@ Draft shape:
     "title": "short title",
     "goal": "clear goal",
     "expectedOutput": "final deliverable",
-    "plan": ["step 1", "step 2", "step 3"],
+    "acceptanceCriteria": ["criterion 1", "criterion 2"],
+    "immutablePrompt": "fixed prompt for every cycle",
+    "loopPolicy": {
+      "maxAttempts": 2,
+      "maxTurns": 8,
+      "maxCycles": null,
+      "maxNoProgressCycles": 3
+    },
+    "plan": ["formal checklist item 1", "formal checklist item 2", "formal checklist item 3"],
     "category": "code",
     "riskLevel": "medium",
     "mode": "codex"
@@ -235,10 +243,14 @@ Allowed `mode`:
 - `agents`: pure planning, research, or synthesis where tool execution is light.
 - `hybrid`: multi-step tasks with planning plus execution or verification. Safe default for complex tasks.
 
-Plan rules:
+Checklist rules:
 
-- Use 3 to 6 concrete steps.
+- Use 3 to 6 concrete checklist items in `plan`.
 - Include a verification step for code, data changes, artifacts, operations, and publishing.
+- `plan` is the user-confirmed TODO/checklist, not a generic software lifecycle template.
+- Avoid filler such as "analyze / design / code / test / deploy" unless those are truly the correct checklist items for this exact mission.
+- `acceptanceCriteria` should describe how Mission Control knows the task is done.
+- `immutablePrompt` should be reusable for every loop cycle of the mission.
 - For "只做方案", "不要改代码", "先分析", or similar, make the execution boundary explicit in `goal`, `expectedOutput`, and `plan`.
 - Do not include `/agent confirm`, `/agent edit`, `/agent cancel`, or other command hints inside draft fields.
 - Return the complete updated draft for `update_pending_draft`, not a patch.
@@ -261,6 +273,18 @@ Use for a new background Agent job.
     "title": "修复测试失败项",
     "goal": "检查当前项目测试并修复失败项",
     "expectedOutput": "代码修复、测试结果和剩余风险说明，并返回当前微信会话。",
+    "acceptanceCriteria": [
+      "相关失败项已定位并修复",
+      "至少一项相关验证已运行并给出结果",
+      "返回剩余风险或阻塞说明"
+    ],
+    "immutablePrompt": "请围绕已确认 checklist 持续推进这条 Mission。每轮先检查工作区和当前分支，保护用户改动；只做与目标直接相关的最小改动；完成后返回可验证结果、剩余风险和下一步。",
+    "loopPolicy": {
+      "maxAttempts": 2,
+      "maxTurns": 8,
+      "maxCycles": null,
+      "maxNoProgressCycles": 3
+    },
     "plan": [
       "运行测试并定位失败项",
       "读取相关代码并制定最小修改方案",
@@ -289,6 +313,18 @@ Use only when editing `pendingDraft`.
     "title": "测试修复方案",
     "goal": "检查当前项目测试失败原因，只输出修复方案，不直接改代码。",
     "expectedOutput": "一份修复方案和执行建议，不修改仓库文件。",
+    "acceptanceCriteria": [
+      "输出明确的修复方案",
+      "说明建议的验证方式",
+      "说明主要风险和执行顺序"
+    ],
+    "immutablePrompt": "请只做方案与分析，不修改代码。围绕已确认 checklist 输出可执行建议、验证方式和风险说明。",
+    "loopPolicy": {
+      "maxAttempts": 2,
+      "maxTurns": 8,
+      "maxCycles": null,
+      "maxNoProgressCycles": 3
+    },
     "plan": [
       "运行或查看测试失败信息",
       "定位相关代码和失败原因",

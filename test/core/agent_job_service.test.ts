@@ -105,7 +105,7 @@ test('AgentJobService keeps package-owned mission authority when AgentJob compat
   );
   assert.deepEqual(
     missionRepository.listEvents(created.id).map((event) => event.kind),
-    ['mission.created', 'mission.queued', 'mission.source_synced', 'mission.source_synced'],
+    ['mission.created', 'mission.source_synced', 'mission.source_synced'],
   );
   assert.deepEqual(
     missionRepository.listChecklistSnapshots(created.id).map((snapshot) => ({
@@ -165,27 +165,30 @@ test('AgentJobService createJob seeds a manual source-backed mission while keepi
 
   const detail = service.getMissionDetail(created.id);
   assert.equal(detail?.mission.source, 'manual');
+  assert.equal(detail?.mission.status, 'draft');
   assert.equal(detail?.hostBindings.platform, 'weixin');
   assert.equal(detail?.hostBindings.source, 'manual');
   assert.equal(detail?.hostBindings.bridgeSessionId, bridgeSession.id);
   assert.equal(detail?.hostBindings.codexThreadId, bridgeSession.codexThreadId);
   assert.equal(detail?.workflow.status, 'loaded');
-  assert.equal(detail?.checklistStatus.currentItem?.title, created.expectedOutput);
+  assert.equal(detail?.checklistStatus.currentItem?.title, created.acceptanceCriteria?.[0] ?? null);
   assert.equal(detail?.checklistStatus.totalItems, 5);
-  assert.equal(detail?.workpadStatus.status, 'queued');
+  assert.equal(detail?.workpadStatus.status, 'draft');
   assert.equal(detail?.currentChecklistSnapshot?.sourceRef, created.id);
-  assert.deepEqual(detail?.currentChecklistSnapshot?.acceptanceCriteria, [created.expectedOutput]);
+  assert.deepEqual(detail?.currentChecklistSnapshot?.acceptanceCriteria, created.acceptanceCriteria);
   assert.deepEqual(detail?.currentChecklistSnapshot?.plan, created.plan);
   assert.deepEqual(detail?.workItem?.metadata, {
     category: 'code',
     mode: 'codex',
     originalInput: '/agent repair the waiting task',
   });
+  assert.notEqual(detail?.mission.immutablePrompt, null);
+  assert.match(detail?.mission.immutablePrompt ?? '', /Mission title: Seed source-backed mission/);
+  assert.deepEqual(detail?.mission.loopPolicy, created.loopPolicy);
 
   const events = missionRepository.listEvents(created.id);
-  assert.deepEqual(events.map((event) => event.kind), ['mission.created', 'mission.queued']);
+  assert.deepEqual(events.map((event) => event.kind), ['mission.created']);
   assert.equal(events[0]?.metadata.source, 'manual');
-  assert.equal(events[1]?.summary, 'Agent mission queued through the bridge adapter.');
 });
 
 test('AgentJobService claimSupervisableJobs recovers stale mission authority and returns resumable verifier work', () => {
@@ -253,7 +256,11 @@ test('AgentJobService claimSupervisableJobs recovers stale mission authority and
 
   const staleQueued = missionRepository.getMissionById(staleJob.id);
   assert.ok(staleQueued);
-  const staleRunning = transitionMission(staleQueued, 'running', {
+  const staleReady = transitionMission(staleQueued, 'queued', {
+    at: nowRef.value + 35,
+    reason: 'Checklist and immutable prompt were confirmed.',
+  });
+  const staleRunning = transitionMission(staleReady, 'running', {
     at: nowRef.value + 40,
     activeAttemptId: 'attempt-agent-service-stale',
     reason: 'Mission was interrupted mid-run.',
@@ -269,7 +276,11 @@ test('AgentJobService claimSupervisableJobs recovers stale mission authority and
 
   const verifyingQueued = missionRepository.getMissionById(verifyingJob.id);
   assert.ok(verifyingQueued);
-  const verifyingRunning = transitionMission(verifyingQueued, 'running', {
+  const verifyingReady = transitionMission(verifyingQueued, 'queued', {
+    at: nowRef.value + 45,
+    reason: 'Checklist and immutable prompt were confirmed.',
+  });
+  const verifyingRunning = transitionMission(verifyingReady, 'running', {
     at: nowRef.value + 50,
     activeAttemptId: 'attempt-agent-service-verifying',
     reason: 'Provider produced a candidate patch.',
@@ -299,6 +310,9 @@ test('AgentJobService claimSupervisableJobs recovers stale mission authority and
     status: 'verifying',
     providerRunId: 'run-agent-service-verifying',
     providerThreadId: bridgeSession.codexThreadId,
+    workflowPath: verifyingMission.workflowPath,
+    workflowHash: verifyingMission.workflowHash,
+    resolverReason: verifyingMission.workflowResolverReason,
     promptDigest: 'digest-agent-service-verifying',
     verifierVerdict: null,
     verifierSummary: 'Verifier work should resume from authoritative state.',
@@ -385,6 +399,9 @@ test('AgentJobService retryJob preserves Mission Control runtime history when re
     status: 'waiting_user',
     providerRunId: 'run-agent-service-1',
     providerThreadId: 'thread-agent-service-1',
+    workflowPath: waiting.workflowPath,
+    workflowHash: waiting.workflowHash,
+    resolverReason: waiting.workflowResolverReason,
     promptDigest: 'digest-agent-service-1',
     verifierVerdict: 'waiting_user',
     verifierSummary: 'Waiting for branch confirmation.',
@@ -515,6 +532,9 @@ test('AgentJobService retryJob preserves prior runtime history for fresh reruns 
     status: 'completed',
     providerRunId: 'run-agent-service-2',
     providerThreadId: 'thread-before-retry',
+    workflowPath: mission.workflowPath,
+    workflowHash: mission.workflowHash,
+    resolverReason: mission.workflowResolverReason,
     promptDigest: 'digest-agent-service-2',
     verifierVerdict: 'complete',
     verifierSummary: 'Verification passed.',

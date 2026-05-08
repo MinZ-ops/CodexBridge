@@ -39,6 +39,7 @@ import type { WeiboHotSearchServiceLike } from '../services/weibo_hot_search.js'
 import type {
   AgentJob,
   AgentJobCategory,
+  AgentJobLoopPolicy,
   AgentJobMode,
   AgentJobRiskLevel,
   AgentJobStatus,
@@ -380,6 +381,9 @@ type AgentDraftCandidate = {
   title: string;
   goal: string;
   expectedOutput: string;
+  acceptanceCriteria: string[];
+  immutablePrompt: string;
+  loopPolicy: AgentJobLoopPolicy;
   plan: string[];
   category: AgentJobCategory;
   riskLevel: AgentJobRiskLevel;
@@ -6029,6 +6033,9 @@ export class BridgeCoordinator {
       originalInput: draft.rawInput,
       goal: draft.goal,
       expectedOutput: draft.expectedOutput,
+      acceptanceCriteria: draft.acceptanceCriteria,
+      immutablePrompt: draft.immutablePrompt,
+      loopPolicy: draft.loopPolicy,
       plan: draft.plan,
       category: draft.category,
       riskLevel: draft.riskLevel,
@@ -6185,10 +6192,14 @@ export class BridgeCoordinator {
       }),
       this.t('coordinator.agent.goal', { value: detail.mission.goal }),
       this.t('coordinator.agent.expectedOutput', { value: detail.mission.expectedOutput }),
-      this.t('coordinator.agent.planTitle'),
-      ...detail.mission.plan.map((line, index) => `${index + 1}. ${line}`),
       this.t('coordinator.agent.attempts', { value: `${detail.mission.attemptCount}/${detail.mission.maxAttempts}` }),
     ];
+    if (detail.mission.acceptanceCriteria.length > 0) {
+      lines.push(this.t('coordinator.agent.acceptanceCriteriaTitle'));
+      lines.push(...detail.mission.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`));
+    }
+    lines.push(this.t('coordinator.agent.checklistItemsTitle'));
+    lines.push(...detail.mission.plan.map((line, index) => `${index + 1}. ${line}`));
     if (detail.checklistStatus.totalItems > 0) {
       lines.push(this.t('coordinator.agent.checklistProgress', {
         completed: detail.checklistStatus.completedItems,
@@ -6822,6 +6833,9 @@ export class BridgeCoordinator {
       title: candidate.title,
       goal: candidate.goal,
       expectedOutput: candidate.expectedOutput,
+      acceptanceCriteria: candidate.acceptanceCriteria,
+      immutablePrompt: candidate.immutablePrompt,
+      loopPolicy: candidate.loopPolicy,
       plan: candidate.plan,
       category: candidate.category,
       riskLevel: candidate.riskLevel,
@@ -6857,6 +6871,9 @@ export class BridgeCoordinator {
       title: candidate.title,
       goal: candidate.goal,
       expectedOutput: candidate.expectedOutput,
+      acceptanceCriteria: candidate.acceptanceCriteria,
+      immutablePrompt: candidate.immutablePrompt,
+      loopPolicy: candidate.loopPolicy,
       plan: candidate.plan,
       category: candidate.category,
       riskLevel: candidate.riskLevel,
@@ -6936,6 +6953,8 @@ export class BridgeCoordinator {
   }
 
   renderAgentDraftResponse(event, draft: PendingAgentDraft) {
+    const checklistLines = buildAgentDraftChecklistLines(this.currentI18n, draft);
+    const loopPolicyLines = buildAgentLoopPolicyLines(this.currentI18n, draft.loopPolicy);
     return messageResponse([
       this.t('coordinator.agent.draftTitle', { title: draft.title }),
       this.t('coordinator.agent.normalizedBy', { value: formatAgentNormalizer(draft.normalizedBy, this.currentI18n) }),
@@ -6943,9 +6962,11 @@ export class BridgeCoordinator {
       this.t('coordinator.agent.category', { value: formatAgentCategory(draft.category, this.currentI18n) }),
       this.t('coordinator.agent.risk', { value: formatAgentRisk(draft.riskLevel, this.currentI18n) }),
       this.t('coordinator.agent.goal', { value: draft.goal }),
-      this.t('coordinator.agent.expectedOutput', { value: draft.expectedOutput }),
-      this.t('coordinator.agent.planTitle'),
-      ...draft.plan.map((line, index) => `${index + 1}. ${line}`),
+      ...checklistLines,
+      this.t('coordinator.agent.immutablePromptTitle'),
+      draft.immutablePrompt,
+      this.t('coordinator.agent.loopPolicyTitle'),
+      ...loopPolicyLines,
       this.t('coordinator.agent.deliveryTarget'),
       this.t('coordinator.agent.draftNotice'),
       this.t('coordinator.agent.confirmHint'),
@@ -7263,7 +7284,7 @@ export class BridgeCoordinator {
         lines.push(...detail.currentChecklistSnapshot.acceptanceCriteria.map((criterion, criterionIndex) => `${criterionIndex + 1}. ${criterion}`));
       }
       if (detail.currentChecklistSnapshot?.plan?.length) {
-        lines.push(this.t('coordinator.agent.planTitle'));
+        lines.push(this.t('coordinator.agent.checklistItemsTitle'));
         lines.push(...detail.currentChecklistSnapshot.plan.map((line, planIndex) => `${planIndex + 1}. ${line}`));
       }
       lines.push(this.t('coordinator.agent.confirmJobHint', { index: commandToken }));
@@ -12607,9 +12628,10 @@ function buildOpenAIAgentPlannerInstructions(locale: string | null): string {
     `You are the intent and planning agent for CodexBridge. Respond in ${language}.`,
     'Normalize the user request into strict JSON only, without markdown.',
     'Schema:',
-    '{"title":"short title","goal":"clear goal","expectedOutput":"final deliverable","plan":["step 1","step 2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}',
+    '{"title":"short title","goal":"clear goal","expectedOutput":"final deliverable","acceptanceCriteria":["criterion 1","criterion 2"],"immutablePrompt":"fixed prompt for every cycle","loopPolicy":{"maxAttempts":2,"maxTurns":8,"maxCycles":null,"maxNoProgressCycles":3},"plan":["formal checklist item 1","formal checklist item 2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}',
     'Prefer mode=hybrid for multi-step tasks, mode=codex for code/repo tasks, and mode=agents for pure research/planning.',
-    'Keep plan to 3-6 concrete steps.',
+    'Keep plan to 3-6 formal checklist items. Do not return generic software lifecycle filler like analyze/design/code/test/deploy unless the task truly requires those exact checklist items.',
+    'Return a concrete immutablePrompt that can be reused for each cycle of the mission.',
   ].join('\n');
 }
 
@@ -12630,8 +12652,8 @@ function buildAgentDraftPrompt(rawInput: string, locale: string | null): string 
   return [
     `请把下面的微信 /agent 请求整理成严格 JSON，只返回 JSON，不要 Markdown。输出语言：${language}。`,
     'Schema:',
-    '{"title":"短标题","goal":"明确目标","expectedOutput":"最终交付物","plan":["步骤1","步骤2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}',
-    '要求：多步骤任务优先 hybrid；代码仓库任务用 codex；纯研究/计划可用 agents；plan 保持 3-6 步。',
+    '{"title":"短标题","goal":"明确目标","expectedOutput":"最终交付物","acceptanceCriteria":["验收条件1","验收条件2"],"immutablePrompt":"固定 Prompt","loopPolicy":{"maxAttempts":2,"maxTurns":8,"maxCycles":null,"maxNoProgressCycles":3},"plan":["正式待办1","正式待办2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}',
+    '要求：多步骤任务优先 hybrid；代码仓库任务用 codex；纯研究/计划可用 agents；plan 代表正式待办 checklist，保持 3-6 条，不要写泛泛的分析/设计/开发/测试模板步骤。',
     '',
     '用户请求：',
     rawInput,
@@ -12643,6 +12665,9 @@ function buildAgentDraftEditPrompt(draft: PendingAgentDraft, instruction: string
     title: draft.title,
     goal: draft.goal,
     expectedOutput: draft.expectedOutput,
+    acceptanceCriteria: draft.acceptanceCriteria,
+    immutablePrompt: draft.immutablePrompt,
+    loopPolicy: draft.loopPolicy,
     plan: draft.plan,
     category: draft.category,
     riskLevel: draft.riskLevel,
@@ -12655,13 +12680,13 @@ function buildAgentDraftEditPrompt(draft: PendingAgentDraft, instruction: string
 这是编辑已有草案，不是重新新建草案。
 
 返回格式：
-{"title":"短标题","goal":"明确目标","expectedOutput":"最终交付物","plan":["步骤1","步骤2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}
+{"title":"短标题","goal":"明确目标","expectedOutput":"最终交付物","acceptanceCriteria":["验收条件1","验收条件2"],"immutablePrompt":"固定 Prompt","loopPolicy":{"maxAttempts":2,"maxTurns":8,"maxCycles":null,"maxNoProgressCycles":3},"plan":["正式待办1","正式待办2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}
 
 编辑规则：
-- 修改提示只覆盖它明确提到的字段；没有提到的 title / goal / expectedOutput / plan / category / riskLevel / mode 必须从当前草案保留。
+- 修改提示只覆盖它明确提到的字段；没有提到的 title / goal / expectedOutput / acceptanceCriteria / immutablePrompt / loopPolicy / plan / category / riskLevel / mode 必须从当前草案保留。
 - 如果用户说“只改计划”“只补一步”“任务目标不变”，必须保留未被明确修改的字段。
-- 如果用户只改执行边界，例如“只做方案，不改代码”，要在 mode / expectedOutput / plan 上反映这个变化，但不要丢掉原目标上下文。
-- plan 保持 3-6 步，步骤要具体。
+- 如果用户只改执行边界，例如“只做方案，不改代码”，要在 mode / expectedOutput / acceptanceCriteria / immutablePrompt / plan 上反映这个变化，但不要丢掉原目标上下文。
+- plan 是正式待办 checklist，不是泛化的软件生命周期模板；保持 3-6 条，条目要具体可判定。
 - 不要把当前草案丢掉后仅按修改提示重新生成。
 - 如果无法可靠合并，返回一个最接近当前草案且已应用明确修改的完整 JSON。
 
@@ -12676,13 +12701,13 @@ Return JSON only. Do not use markdown or explanations.
 This edits an existing draft. It is not a new draft.
 
 Return format:
-{"title":"short title","goal":"clear goal","expectedOutput":"final deliverable","plan":["step 1","step 2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}
+{"title":"short title","goal":"clear goal","expectedOutput":"final deliverable","acceptanceCriteria":["criterion 1","criterion 2"],"immutablePrompt":"fixed prompt","loopPolicy":{"maxAttempts":2,"maxTurns":8,"maxCycles":null,"maxNoProgressCycles":3},"plan":["formal checklist item 1","formal checklist item 2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}
 
 Edit rules:
-- Only override fields explicitly mentioned by the edit instruction. Preserve title / goal / expectedOutput / plan / category / riskLevel / mode from the current draft when not mentioned.
+- Only override fields explicitly mentioned by the edit instruction. Preserve title / goal / expectedOutput / acceptanceCriteria / immutablePrompt / loopPolicy / plan / category / riskLevel / mode from the current draft when not mentioned.
 - If the user says to only adjust part of the draft, preserve everything else.
-- If the user only changes execution boundaries, such as "only write the plan and do not change code", reflect that in mode / expectedOutput / plan without dropping the original task context.
-- Keep plan to 3-6 concrete steps.
+- If the user only changes execution boundaries, such as "only write the plan and do not change code", reflect that in mode / expectedOutput / acceptanceCriteria / immutablePrompt / plan without dropping the original task context.
+- Keep plan to 3-6 concrete checklist items. Do not return generic analyze/design/code/test filler unless they are truly the confirmed checklist.
 - Do not discard the current draft and regenerate only from the edit instruction.
 - If the edit cannot be merged reliably, return the closest full JSON draft that preserves the current draft and applies the explicit changes.
 
@@ -12913,11 +12938,35 @@ function parseAgentDraftCandidate(value: unknown): AgentDraftCandidate | null {
   const plan = Array.isArray(draft.plan)
     ? draft.plan.map((line) => compactWhitespace(line)).filter(Boolean).slice(0, 8)
     : [];
+  const localeHint = inferAgentDraftLocaleHint(title, goal, expectedOutput, ...plan);
+  const acceptanceCriteria = Array.isArray(draft.acceptanceCriteria ?? draft.acceptance_criteria)
+    ? (draft.acceptanceCriteria ?? draft.acceptance_criteria)
+      .map((line: unknown) => compactWhitespace(line))
+      .filter(Boolean)
+      .slice(0, 8)
+    : [];
+  const loopPolicy = parseAgentLoopPolicy(draft.loopPolicy ?? draft.loop_policy);
+  const normalizedPlan = plan.length > 0 ? plan : buildLocalAgentPlan(goal);
   return {
     title: truncateText(title, 40),
     goal,
     expectedOutput,
-    plan: plan.length > 0 ? plan : buildLocalAgentPlan(goal),
+    acceptanceCriteria: acceptanceCriteria.length > 0
+      ? acceptanceCriteria
+      : buildDefaultAgentAcceptanceCriteria(expectedOutput, localeHint),
+    immutablePrompt: compactWhitespace(draft.immutablePrompt ?? draft.immutable_prompt ?? '')
+      || buildDefaultAgentImmutablePrompt({
+        title,
+        goal,
+        expectedOutput,
+        acceptanceCriteria: acceptanceCriteria.length > 0
+          ? acceptanceCriteria
+          : buildDefaultAgentAcceptanceCriteria(expectedOutput, localeHint),
+        plan: normalizedPlan,
+        localeHint,
+      }),
+    loopPolicy,
+    plan: normalizedPlan,
     category: normalizeAgentCategory(draft.category),
     riskLevel: normalizeAgentRisk(draft.riskLevel ?? draft.risk_level),
     mode: normalizeAgentMode(draft.mode),
@@ -13356,11 +13405,25 @@ function parseJsonObject(value: unknown): Record<string, any> | null {
 function buildLocalAgentDraftCandidate(rawInput: string): AgentDraftCandidate {
   const normalized = compactWhitespace(rawInput);
   const title = truncateText(normalized || 'Agent', 40);
+  const localeHint = inferAgentDraftLocaleHint(title, normalized);
+  const expectedOutput = '完成任务并把最终结果、验证结果和风险说明返回到当前微信会话。';
+  const plan = buildLocalAgentPlan(normalized);
+  const acceptanceCriteria = buildDefaultAgentAcceptanceCriteria(expectedOutput, localeHint);
   return {
     title,
     goal: normalized,
-    expectedOutput: '完成任务并把最终结果、验证结果和风险说明返回到当前微信会话。',
-    plan: buildLocalAgentPlan(normalized),
+    expectedOutput,
+    acceptanceCriteria,
+    immutablePrompt: buildDefaultAgentImmutablePrompt({
+      title,
+      goal: normalized,
+      expectedOutput,
+      acceptanceCriteria,
+      plan,
+      localeHint,
+    }),
+    loopPolicy: buildDefaultAgentLoopPolicy(),
+    plan,
     category: inferAgentCategory(normalized),
     riskLevel: inferAgentRisk(normalized),
     mode: inferAgentMode(normalized),
@@ -13378,6 +13441,147 @@ function buildLocalAgentPlan(goal: string): string[] {
     '运行可用验证并根据结果修复一次',
     '把最终结果和风险说明发回微信',
   ];
+}
+
+function buildDefaultAgentAcceptanceCriteria(expectedOutput: string, localeHint: SupportedLocale | null = null): string[] {
+  if (localeHint === 'zh-CN') {
+    return [
+      `产出约定交付物：${expectedOutput}`,
+      '提供可验证结果，或明确说明为什么暂时无法完成验证。',
+      '总结剩余风险、阻塞点或后续建议。',
+    ];
+  }
+  return [
+    `Produce the agreed deliverable: ${expectedOutput}`,
+    'Include verifiable results, or clearly explain why verification could not be completed.',
+    'Summarize remaining risks, blockers, or follow-up recommendations.',
+  ];
+}
+
+function buildDefaultAgentImmutablePrompt(input: {
+  title: string;
+  goal: string;
+  expectedOutput: string;
+  acceptanceCriteria: string[];
+  plan: string[];
+  localeHint?: SupportedLocale | null;
+}): string {
+  if (input.localeHint === 'zh-CN') {
+    return [
+      `任务标题：${input.title}`,
+      '不可变目标：',
+      input.goal,
+      '',
+      '最终交付物：',
+      input.expectedOutput,
+      '',
+      '验收标准：',
+      ...input.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+      '',
+      '已确认待办清单：',
+      ...input.plan.map((item, index) => `${index + 1}. ${item}`),
+      '',
+      '执行规则：',
+      '1. 必须围绕已确认 checklist 持续推进，直到完成、阻塞或需要人工输入。',
+      '2. 保护用户现有改动，不要覆盖无关本地修改。',
+      '3. 输出可验证结果、剩余风险和下一步最合理动作。',
+    ].join('\n');
+  }
+  return [
+    `Mission title: ${input.title}`,
+    'Immutable goal:',
+    input.goal,
+    '',
+    'Expected output:',
+    input.expectedOutput,
+    '',
+    'Acceptance criteria:',
+    ...input.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`),
+    '',
+    'Confirmed checklist:',
+    ...input.plan.map((item, index) => `${index + 1}. ${item}`),
+    '',
+    'Execution rules:',
+    '1. Keep working against the confirmed checklist until the mission completes, blocks, or needs human input.',
+    '2. Preserve user changes and do not overwrite unrelated local modifications.',
+    '3. Return verifiable results, remaining risks, and the next most reasonable step.',
+  ].join('\n');
+}
+
+function buildDefaultAgentLoopPolicy(): AgentJobLoopPolicy {
+  return {
+    maxAttempts: 2,
+    maxTurns: 8,
+    maxCycles: null,
+    maxNoProgressCycles: 3,
+  };
+}
+
+function inferAgentDraftLocaleHint(...values: string[]): SupportedLocale | null {
+  return values.some((value) => /[\u3400-\u9fff]/u.test(String(value ?? '')))
+    ? 'zh-CN'
+    : null;
+}
+
+function parseAgentLoopPolicy(value: unknown): AgentJobLoopPolicy {
+  const parsed = value && typeof value === 'object' && !Array.isArray(value)
+    ? value as Record<string, unknown>
+    : {};
+  const defaults = buildDefaultAgentLoopPolicy();
+  return {
+    maxAttempts: normalizeAgentLoopBudget(parsed.maxAttempts ?? parsed.max_attempts, defaults.maxAttempts ?? null),
+    maxTurns: normalizeAgentLoopBudget(parsed.maxTurns ?? parsed.max_turns, defaults.maxTurns ?? null),
+    maxCycles: normalizeAgentLoopBudget(parsed.maxCycles ?? parsed.max_cycles, defaults.maxCycles ?? null),
+    maxNoProgressCycles: normalizeAgentLoopBudget(
+      parsed.maxNoProgressCycles ?? parsed.max_no_progress_cycles,
+      defaults.maxNoProgressCycles ?? null,
+    ),
+  };
+}
+
+function normalizeAgentLoopBudget(value: unknown, fallback: number | null): number | null {
+  if (value === null || value === undefined || value === '') {
+    return fallback;
+  }
+  const normalized = Number(value);
+  return Number.isInteger(normalized) && normalized > 0 ? normalized : fallback;
+}
+
+function buildAgentDraftChecklistLines(i18n: Translator, draft: PendingAgentDraft): string[] {
+  const lines = [
+    i18n.t('coordinator.agent.initialChecklistTitle'),
+    i18n.t('coordinator.agent.expectedOutput', { value: draft.expectedOutput }),
+  ];
+  if (draft.acceptanceCriteria.length > 0) {
+    lines.push(i18n.t('coordinator.agent.acceptanceCriteriaTitle'));
+    lines.push(...draft.acceptanceCriteria.map((criterion, index) => `${index + 1}. ${criterion}`));
+  }
+  lines.push(i18n.t('coordinator.agent.checklistItemsTitle'));
+  lines.push(...draft.plan.map((line, index) => `${index + 1}. ${line}`));
+  return lines;
+}
+
+function buildAgentLoopPolicyLines(i18n: Translator, loopPolicy: AgentJobLoopPolicy): string[] {
+  return [
+    i18n.t('coordinator.agent.loopPolicyMaxAttempts', {
+      value: formatAgentLoopBudget(i18n, loopPolicy.maxAttempts ?? null),
+    }),
+    i18n.t('coordinator.agent.loopPolicyMaxTurns', {
+      value: formatAgentLoopBudget(i18n, loopPolicy.maxTurns ?? null),
+    }),
+    i18n.t('coordinator.agent.loopPolicyMaxCycles', {
+      value: formatAgentLoopBudget(i18n, loopPolicy.maxCycles ?? null),
+    }),
+    i18n.t('coordinator.agent.loopPolicyNoProgressCycles', {
+      value: formatAgentLoopBudget(i18n, loopPolicy.maxNoProgressCycles ?? null),
+    }),
+  ];
+}
+
+function formatAgentLoopBudget(i18n: Translator, value: number | null): string {
+  return value && value > 0
+    ? String(value)
+    : i18n.t('coordinator.agent.loopPolicyUnlimited');
 }
 
 function inferAgentCategory(text: string): AgentJobCategory {
@@ -14184,6 +14388,9 @@ function agentDraftToCommandSkillJson(draft: PendingAgentDraft): Record<string, 
     title: draft.title,
     goal: draft.goal,
     expectedOutput: draft.expectedOutput,
+    acceptanceCriteria: draft.acceptanceCriteria,
+    immutablePrompt: draft.immutablePrompt,
+    loopPolicy: draft.loopPolicy,
     plan: draft.plan,
     category: draft.category,
     riskLevel: draft.riskLevel,
