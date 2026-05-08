@@ -189,6 +189,10 @@ Upstream:
 9. Isolated native side-task turns should be created through one runtime module
    that owns ephemeral thread/session bootstrap and the default read-only
    session settings for helper turns.
+10. The localhost API shell should resolve provider profile / plugin / auth
+    context per request instead of snapshotting one startup session, so
+    reconnect and account-switch changes become visible without restarting the
+    server.
 
 ## Ordered Executable Sequence
 
@@ -259,6 +263,33 @@ Build:
 Completion target:
 
 - logged-in Codex can be called through a stable local Responses-first API
+
+Implementation checklist:
+
+- [x] Add an internal localhost server shell module:
+  - `src/providers/codex/native_api_server.ts`
+  - binds to `127.0.0.1` by default
+  - resolves provider/runtime context per request so reconnect and account
+    switches do not require a process restart
+- [x] Expose `GET /v1/models`
+  - returns model catalog plus native-runtime readiness/account metadata for
+    local debugging
+- [x] Expose non-streaming `POST /v1/responses`
+  - reuses `CodexNativeRuntime.runIsolatedTurn()`
+  - keeps isolated execution on the existing ephemeral-thread primitive
+  - rejects `previous_response_id` until stage 3 lands instead of faking a
+    continuation path early
+- [x] Add optional local bearer auth for localhost consumers that want a shared
+  secret
+- [x] Cover the shell with focused tests
+  - model listing
+  - isolated response execution
+  - continuation rejection
+  - optional bearer auth
+- [ ] Decide whether Phase 2 should expose `POST /v1/responses/compact` or keep
+  it explicitly unsupported until compatibility/hardening
+- [ ] Add startup/lifecycle integration for a long-running localhost service
+  outside unit tests
 
 ### 3. Continuation registry and sticky execution mapping
 
@@ -441,17 +472,19 @@ Only after:
 
 ### Phase 1: Minimal localhost Responses API
 
-- [ ] Expose `GET /v1/models`
-- [ ] Expose `POST /v1/responses`
+- [x] Expose `GET /v1/models`
+- [x] Expose `POST /v1/responses`
 - [ ] Support streaming Responses output
 - [ ] Map Codex-native continuation/thread semantics to `response_id` /
   `previous_response_id`
-- [ ] Bind localhost only by default
-- [ ] Add minimal local auth or shared-secret policy if needed
-- [ ] Reuse the same native isolated execution primitive already proven by
+- [x] Bind localhost only by default
+- [x] Add minimal local auth or shared-secret policy if needed
+- [x] Reuse the same native isolated execution primitive already proven by
   current helper-thread / command-skill flows
-- [ ] Extract or wrap a stable native runtime service instead of directly
+- [x] Extract or wrap a stable native runtime service instead of directly
   calling scattered provider primitives
+- [x] Resolve provider/runtime context per request so reconnect/account-switch
+  changes remain visible to localhost callers without a restart
 
 ### Phase 2: Internal isolated-task routing
 

@@ -70,6 +70,9 @@ Current internal shape:
 - current internal helper paths in `src/core/bridge_coordinator.ts` should call
   this substrate instead of re-implementing `startThread({ ephemeral: true })`
   + `startTurn()` ad hoc
+- `src/providers/codex/native_api_server.ts` is the first in-process localhost
+  shell over that substrate; it resolves provider/runtime context per request
+  so reconnect/account-switch changes do not require a server restart
 
 ### Stage B: Internal workspace package
 
@@ -307,6 +310,15 @@ Build:
 - `POST /v1/responses`
 - optional `POST /v1/responses/compact`
 - minimal local secret/shared-key policy if needed
+
+First shell constraints:
+
+- bind `127.0.0.1` by default
+- resolve provider profile / plugin / auth context per request
+- reuse `CodexNativeRuntime.runIsolatedTurn()` for actual execution
+- reject `previous_response_id` until the continuation registry exists instead
+  of inventing a fake continuation path early
+- allow streaming to remain explicitly unsupported until a later hardening pass
 
 Outcome:
 
@@ -664,9 +676,12 @@ It should not own:
 
 - `GET /v1/models`
 - `POST /v1/responses`
-- streaming
-- continuation mapping
 - localhost-only binding
+- optional local bearer/shared-secret auth
+- reuse the existing isolated native execution primitive
+- request-scoped runtime context resolution
+- explicit non-support for streaming and `previous_response_id` until later
+  phases
 
 ### Phase 2: Internal isolated-task routing
 
@@ -675,13 +690,20 @@ It should not own:
 - no main-thread contamination
 - local direct fallback remains available when the API layer is unavailable
 
-### Phase 3: Compatibility layer
+### Phase 3: Continuation and sticky execution mapping
+
+- `response_id -> native thread/turn identity`
+- `previous_response_id -> continuation lookup`
+- runtime/account affinity
+- expiry and bookkeeping
+
+### Phase 4: Compatibility layer
 
 - `POST /v1/chat/completions`
 - selective compatibility support
 - optional fallback hooks
 
-### Phase 4: Hardening
+### Phase 5: Hardening
 
 - observability
 - restart/reconnect behavior
