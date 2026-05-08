@@ -72,8 +72,9 @@ Current internal shape:
   + `startTurn()` ad hoc
 - `src/providers/codex/native_api_continuation_registry.ts` owns the first
   in-process `response_id -> isolated native session` mapping, TTL bookkeeping,
-  and sticky provider/account affinity checks for `previous_response_id`
-  continuations
+  sticky provider/account affinity checks for `previous_response_id`
+  continuations, and the explicit Phase 3 contract that default continuation
+  state is process-local and does not survive a native-api service restart
 - `src/providers/codex/native_api_server.ts` is the first in-process localhost
   shell over that substrate; it resolves provider/runtime context per request
   so reconnect/account-switch changes do not require a server restart
@@ -352,11 +353,13 @@ Build:
 - `previous_response_id -> continuation lookup`
 - account/runtime affinity for isolated chains
 - continuation expiry and bookkeeping rules
+- explicit process-lifetime durability for the first registry, with persisted
+  recovery deferred until later hardening work if justified
 
 Outcome:
 
 - API callers get stateless-looking requests with stable native continuation
-  underneath
+  underneath during one running native-api service lifetime
 
 ### 4. Route isolated internal side tasks into the native API lane
 
@@ -492,6 +495,14 @@ Owns:
 - `started_at` / `last_used_at`
 - `expiry_at`
 - model/provider/runtime metadata needed to resume or audit a side-task chain
+
+Phase 3 durability decision:
+
+- the first registry is intentionally in-memory and process-local
+- restarting the localhost native-api service invalidates outstanding
+  `previous_response_id` chains
+- persisted recovery is a later hardening/extraction concern, not part of the
+  first localhost shell contract
 
 ### 5. Codex app-server bridge
 

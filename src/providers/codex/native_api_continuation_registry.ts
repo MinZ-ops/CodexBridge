@@ -20,7 +20,14 @@ export interface CodexNativeApiContinuationLookupResult {
   entry: CodexNativeApiContinuationEntry | null;
 }
 
+export interface CodexNativeApiContinuationRegistryDescriptor {
+  kind: string;
+  persistence: 'in_process' | 'persistent';
+  ttlMs: number | null;
+}
+
 export interface CodexNativeApiContinuationRegistry {
+  describe(): CodexNativeApiContinuationRegistryDescriptor;
   lookup(responseId: string): CodexNativeApiContinuationLookupResult;
   store(entry: Omit<CodexNativeApiContinuationEntry, 'bridgeSession' | 'startedAt' | 'lastUsedAt' | 'expiryAt'> & {
     bridgeSession: BridgeSession;
@@ -53,6 +60,14 @@ export class InMemoryCodexNativeApiContinuationRegistry implements CodexNativeAp
     this.ttlMs = Number.isFinite(ttlMs) && Number(ttlMs) > 0
       ? Number(ttlMs)
       : DEFAULT_CONTINUATION_TTL_MS;
+  }
+
+  describe(): CodexNativeApiContinuationRegistryDescriptor {
+    return {
+      kind: 'in_memory',
+      persistence: 'in_process',
+      ttlMs: this.ttlMs,
+    };
   }
 
   lookup(responseId: string): CodexNativeApiContinuationLookupResult {

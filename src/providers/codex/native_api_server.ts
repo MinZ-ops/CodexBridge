@@ -7,6 +7,7 @@ import {
 import {
   InMemoryCodexNativeApiContinuationRegistry,
   type CodexNativeApiContinuationEntry,
+  type CodexNativeApiContinuationRegistryDescriptor,
   type CodexNativeApiContinuationLookupResult,
   type CodexNativeApiContinuationRegistry,
 } from './native_api_continuation_registry.js';
@@ -250,6 +251,7 @@ export class CodexNativeApiServer {
       models: inspected.models.map((model) => serializeModel(model, context.providerProfile)),
       meta: {
         localhost_only: true,
+        continuation_registry: serializeContinuationRegistryDescriptor(this.continuationRegistry.describe()),
         native_runtime: buildRuntimeMetadata({
           providerProfile: context.providerProfile,
           readiness: inspected.readiness,
@@ -300,6 +302,7 @@ export class CodexNativeApiServer {
           type: 'invalid_request_error',
           code: error.code,
         },
+        continuation_registry: serializeContinuationRegistryDescriptor(this.continuationRegistry.describe()),
       });
       return;
     }
@@ -787,6 +790,17 @@ function buildRuntimeMetadata({
     thread_id: threadId,
     turn_id: turnId,
     bridge_session_id: bridgeSessionId,
+  });
+}
+
+function serializeContinuationRegistryDescriptor(
+  descriptor: CodexNativeApiContinuationRegistryDescriptor,
+): JsonRecord {
+  return omitUndefined({
+    kind: normalizeString(descriptor.kind) || 'unknown',
+    persistence: descriptor.persistence,
+    survives_process_restart: descriptor.persistence === 'persistent',
+    ttl_ms: Number.isFinite(descriptor.ttlMs) ? Number(descriptor.ttlMs) : null,
   });
 }
 

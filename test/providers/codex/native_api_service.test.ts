@@ -96,3 +96,103 @@ test('CodexNativeApiService rejects unknown provider profile overrides before st
     /Unknown Codex native API provider profile: missing-profile/,
   );
 });
+
+test('CodexNativeApiService continuations stay in-process and do not survive a service restart', async () => {
+  const runtime = new CodexNativeRuntime({
+    now: () => 222,
+    createSessionId: () => 'session-native-api-1',
+    readAccountIdentity: () => ({
+      email: 'native@example.com',
+      name: 'Native Runtime',
+      authMode: 'chatgpt',
+      accountId: 'acc_native',
+      plan: 'plus',
+      authPath: '/tmp/native-api-auth.json',
+    }),
+  });
+  let startTurnCalls = 0;
+  const providerPlugin = {
+    async listModels() {
+      return [{
+        id: 'gpt-5.4',
+        model: 'gpt-5.4',
+        displayName: 'GPT-5.4',
+        description: 'Frontier coding model.',
+        isDefault: true,
+        supportedReasoningEfforts: ['medium'],
+        defaultReasoningEffort: 'medium',
+      }];
+    },
+    async startThread(params: any) {
+      return {
+        threadId: 'thread-native-api-1',
+        cwd: params.cwd,
+        title: params.title,
+      };
+    },
+    async startTurn(params: any) {
+      startTurnCalls += 1;
+      return {
+        outputText: `reply-${startTurnCalls}`,
+        previewText: '',
+        threadId: params.bridgeSession.codexThreadId,
+        turnId: `turn-native-api-${startTurnCalls}`,
+      };
+    },
+  } as any;
+  const providerRegistry = {
+    getProvider() {
+      return providerPlugin;
+    },
+  } as any;
+  const providerProfiles = makeProviderProfiles([makeProfile()]) as any;
+  const service = new CodexNativeApiService({
+    runtime,
+    providerProfiles,
+    providerRegistry,
+    createResponseId: () => 'resp_native_api_1',
+  });
+
+  await service.start();
+  try {
+    const initial = await fetch(`${service.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        input: 'First request',
+      }),
+    });
+    const initialBody = await initial.json() as any;
+    assert.equal(initial.status, 200);
+    assert.equal(initialBody.id, 'resp_native_api_1');
+  } finally {
+    await service.stop();
+  }
+
+  const restartedService = new CodexNativeApiService({
+    runtime,
+    providerProfiles,
+    providerRegistry,
+  });
+
+  await restartedService.start();
+  try {
+    const followup = await fetch(`${restartedService.baseUrl}/v1/responses`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        previous_response_id: 'resp_native_api_1',
+        input: 'Second request',
+      }),
+    });
+    const followupBody = await followup.json() as any;
+    assert.equal(followup.status, 404);
+    assert.equal(followupBody.error.code, 'continuation_not_found');
+    assert.equal(followupBody.continuation_registry.kind, 'in_memory');
+    assert.equal(followupBody.continuation_registry.persistence, 'in_process');
+    assert.equal(followupBody.continuation_registry.survives_process_restart, false);
+    assert.equal(startTurnCalls, 1);
+  } finally {
+    await restartedService.stop();
+  }
+});

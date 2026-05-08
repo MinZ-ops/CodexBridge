@@ -203,6 +203,10 @@ Upstream:
 13. `previous_response_id` continuation must stay sticky to the original
     provider profile and active native account; if that affinity breaks, fail
     fast instead of continuing on a different native identity.
+14. Phase 3 continuation durability stays explicitly process-local:
+    restarting the native-api service clears the default in-memory registry and
+    callers must treat old `previous_response_id` chains as invalid until a
+    later hardening/extraction phase intentionally adds persisted recovery.
 
 ## Ordered Executable Sequence
 
@@ -347,8 +351,15 @@ Implementation checklist:
     silently rehoming the chain onto a different native identity
 - [x] Cover lookup, expiry, continuation success, and account-mismatch behavior
   with focused tests
-- [ ] Decide whether continuation mappings must survive native-api service
+- [x] Decide whether continuation mappings must survive native-api service
   restarts in Phase 3, or remain explicitly in-process until Phase 5
+  - decision: remain explicitly in-process through Phase 3 and current
+    localhost-service startup shape
+  - consequence: a native-api service restart drops default continuation state,
+    and callers receive `continuation_not_found` rather than silent rehoming or
+    fake recovery
+  - follow-up: revisit persisted continuation recovery only during later
+    hardening/package-extraction work if a second real consumer justifies it
 
 ### 4. Internal side-task routing and direct local fallback
 
@@ -427,8 +438,7 @@ re-routed.
 
 ## Continuation Registry Expectations
 
-The first continuation registry should be able to persist or reconstruct at
-least:
+The first continuation registry should explicitly track at least:
 
 - `response_id`
 - `previous_response_id`
@@ -440,6 +450,13 @@ least:
 - `started_at`
 - `last_used_at`
 - `expiry_at`
+
+Phase 3 decision:
+
+- the default registry is process-local in-memory state
+- service restart is allowed to invalidate all outstanding continuation chains
+- persisted continuation recovery is deferred until later hardening/package
+  extraction work
 
 ## Recommended Implementation Boundary
 
@@ -559,6 +576,9 @@ Only after:
   - streaming event ordering
   - local auth / localhost-only assumptions
   - restart/reconnect behavior when app-server is restarted
+- [ ] Revisit whether persisted continuation recovery is worth the added state
+  surface once restart semantics, observability, and extraction boundaries are
+  otherwise stable
 - [ ] Add observability for:
   - request routing target
   - response mapping

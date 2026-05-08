@@ -61,6 +61,10 @@ test('CodexNativeApiServer exposes /v1/models with runtime metadata', async () =
     assert.equal(body.meta.native_runtime.ready, true);
     assert.equal(body.meta.native_runtime.account_identity.account_id, 'acc_native');
     assert.equal(body.meta.native_runtime.provider_profile_id, 'openai-default');
+    assert.equal(body.meta.continuation_registry.kind, 'in_memory');
+    assert.equal(body.meta.continuation_registry.persistence, 'in_process');
+    assert.equal(body.meta.continuation_registry.survives_process_restart, false);
+    assert.equal(body.meta.continuation_registry.ttl_ms, 30 * 60 * 1000);
   } finally {
     await server.stop();
   }
@@ -311,6 +315,9 @@ test('CodexNativeApiServer rejects unknown continuation ids and streaming reques
     const continuationBody = await continuationResponse.json() as any;
     assert.equal(continuationResponse.status, 404);
     assert.equal(continuationBody.error.code, 'continuation_not_found');
+    assert.equal(continuationBody.continuation_registry.kind, 'in_memory');
+    assert.equal(continuationBody.continuation_registry.persistence, 'in_process');
+    assert.equal(continuationBody.continuation_registry.survives_process_restart, false);
 
     const streamingResponse = await fetch(`${server.baseUrl}/v1/responses`, {
       method: 'POST',
