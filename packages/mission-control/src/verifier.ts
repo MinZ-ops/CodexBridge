@@ -43,6 +43,9 @@ export interface MissionVerifierResult {
   missingAcceptanceCriteria: string[];
   budgetExceeded: boolean;
   budgetExceededReasons: string[];
+  progressSummary: string | null;
+  nextStep: string | null;
+  latestBlocker: string | null;
 }
 
 export interface CreateMissionVerifierResultInput {
@@ -50,6 +53,9 @@ export interface CreateMissionVerifierResultInput {
   summary?: string | null;
   missingAcceptanceCriteria?: readonly string[] | null;
   budgetExceededReasons?: readonly string[] | null;
+  progressSummary?: string | null;
+  nextStep?: string | null;
+  latestBlocker?: string | null;
 }
 
 export interface MissionVerifier {
@@ -110,6 +116,9 @@ export function createMissionVerifierResult(
     missingAcceptanceCriteria,
     budgetExceeded: budgetExceededReasons.length > 0,
     budgetExceededReasons,
+    progressSummary: normalizeText(input.progressSummary) ?? summary,
+    nextStep: normalizeText(input.nextStep),
+    latestBlocker: normalizeText(input.latestBlocker),
   };
 }
 
@@ -182,10 +191,11 @@ export function applyMissionVerifierResultToWorkpad(
     : null;
   return {
     ...workpad,
+    summary: result.progressSummary ?? result.summary,
     latestVerifierSummary: result.summary,
     latestBlocker: result.verdict === 'complete'
       ? null
-      : missingSummary ?? result.summary,
+      : result.latestBlocker ?? missingSummary ?? result.summary,
     finalResultSummary: result.verdict === 'complete'
       ? result.summary
       : workpad.finalResultSummary,

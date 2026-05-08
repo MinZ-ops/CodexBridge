@@ -24,7 +24,11 @@ import {
   finalizeTurnArtifacts,
 } from './turn_artifacts.js';
 import { writeSequencedDebugLog } from './sequenced_stderr.js';
-import type { MissionHostNotification } from '../../packages/mission-control/src/index.js';
+import type {
+  ChecklistItem,
+  ChecklistSnapshot,
+  MissionHostNotification,
+} from '../../packages/mission-control/src/index.js';
 import {
   createI18n,
   formatRelativeTimeLocalized,
@@ -604,6 +608,15 @@ type AgentVerificationResult = {
   summary: string;
   issues: string[];
   nextAction: 'complete' | 'retry' | 'fail';
+  progressSummary: string | null;
+  nextStep: string | null;
+  latestBlocker: string | null;
+};
+
+type AgentVerificationContext = {
+  checklistSnapshot: ChecklistSnapshot | null;
+  activeChecklistItem: ChecklistItem | null;
+  isFinalChecklistItem: boolean;
 };
 
 type OpenAIAgentRuntimeConfig = {
@@ -11145,7 +11158,12 @@ export class BridgeCoordinator {
         stopSession: async (nextScopeRef, nextSession) => {
           await this.stopThreadForSession(nextScopeRef, nextSession, { waitForSettleMs: 0 });
         },
-        verifyJob: async (liveJob, result, liveSession) => this.verifyAgentJob(liveJob, result, liveSession),
+        verifyJob: async (liveJob, result, liveSession, context) => this.verifyAgentJob(
+          liveJob,
+          result,
+          liveSession,
+          context,
+        ),
         progressText: {
           running: (attempt, maxAttempts) => this.t('coordinator.agent.progressRunning', {
             title: current.title,
@@ -11257,7 +11275,12 @@ export class BridgeCoordinator {
     ], buildSessionMeta(finalSession));
   }
 
-  async verifyAgentJob(job: AgentJob, result, session): Promise<AgentVerificationResult> {
+  async verifyAgentJob(
+    job: AgentJob,
+    result,
+    session,
+    context: AgentVerificationContext,
+  ): Promise<AgentVerificationResult> {
     const hardFailure = resolveAgentHardFailure(result);
     if (hardFailure) {
       return {
@@ -11265,13 +11288,21 @@ export class BridgeCoordinator {
         summary: hardFailure,
         issues: [hardFailure],
         nextAction: 'retry',
+        progressSummary: hardFailure,
+        nextStep: null,
+        latestBlocker: hardFailure,
       };
     }
-    const codexVerification = await this.verifyAgentResultWithCodex(job, result, session).catch(() => null);
+    const codexVerification = await this.verifyAgentResultWithCodex(job, result, session, context).catch(() => null);
     if (codexVerification) {
       return codexVerification;
     }
-    const semantic = await verifyAgentResultWithOpenAIAgents(job, result, this.currentI18n.locale).catch(() => null);
+    const semantic = await verifyAgentResultWithOpenAIAgents(
+      job,
+      result,
+      this.currentI18n.locale,
+      context,
+    ).catch(() => null);
     if (semantic) {
       return semantic;
     }
@@ -11280,6 +11311,9 @@ export class BridgeCoordinator {
       summary: this.t('coordinator.agent.verifyFallbackPass'),
       issues: [],
       nextAction: 'complete',
+      progressSummary: this.t('coordinator.agent.verifyFallbackPass'),
+      nextStep: null,
+      latestBlocker: null,
     };
   }
 
@@ -11320,7 +11354,12 @@ export class BridgeCoordinator {
     }, options);
   }
 
-  async verifyAgentResultWithCodex(job: AgentJob, result, session): Promise<AgentVerificationResult | null> {
+  async verifyAgentResultWithCodex(
+    job: AgentJob,
+    result,
+    session,
+    context: AgentVerificationContext,
+  ): Promise<AgentVerificationResult | null> {
     const providerProfile = this.requireProviderProfile(job.providerProfileId);
     const providerPlugin = this.providerRegistry.getProvider(providerProfile.providerKind);
     const thread = await providerPlugin.startThread({
@@ -11343,7 +11382,7 @@ export class BridgeCoordinator {
       createdAt: this.now(),
       updatedAt: this.now(),
     };
-    const prompt = buildAgentVerifierPrompt(job, result, this.currentI18n.locale);
+    const prompt = buildAgentVerifierPrompt(job, result, this.currentI18n.locale, context);
     const verifierEvent = withDeveloperPromptContext({
       platform: job.platform,
       externalScopeId: job.externalScopeId,
@@ -12534,7 +12573,12 @@ async function normalizeAgentDraftEditWithOpenAIAgents(
   return parseAgentDraftCandidate(output);
 }
 
-async function verifyAgentResultWithOpenAIAgents(job: AgentJob, result, locale: string | null): Promise<AgentVerificationResult | null> {
+async function verifyAgentResultWithOpenAIAgents(
+  job: AgentJob,
+  result,
+  locale: string | null,
+  context: AgentVerificationContext,
+): Promise<AgentVerificationResult | null> {
   if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
     return null;
   }
@@ -12545,6 +12589,15 @@ async function verifyAgentResultWithOpenAIAgents(job: AgentJob, result, locale: 
       goal: job.goal,
       expectedOutput: job.expectedOutput,
       plan: job.plan,
+      acceptanceCriteria: job.acceptanceCriteria,
+      activeChecklistItem: context.activeChecklistItem
+        ? {
+          kind: context.activeChecklistItem.kind,
+          title: context.activeChecklistItem.title,
+          detail: context.activeChecklistItem.detail,
+        }
+        : null,
+      isFinalChecklistItem: context.isFinalChecklistItem,
       outputState: result?.outputState ?? null,
       outputText: truncateText(String(result?.outputText ?? result?.previewText ?? ''), 6000),
       artifactCount: Array.isArray(result?.outputArtifacts) ? result.outputArtifacts.length : 0,
@@ -12735,10 +12788,10 @@ function buildOpenAIAgentVerifierInstructions(locale: string | null): string {
   const language = normalizeLocale(locale) === 'zh-CN' ? 'Chinese' : 'English';
   return [
     `You are the verifier for a CodexBridge background agent job. Respond in ${language}.`,
-    'Judge whether the output satisfies the goal and expected deliverable.',
+    'Judge whether the current formal checklist item is complete, and only treat the whole mission as complete when the final checklist item also satisfies the goal and acceptance criteria.',
     'Return strict JSON only, without markdown.',
     'Schema:',
-    '{"pass":true,"summary":"short verdict","issues":[],"nextAction":"complete|retry|fail"}',
+    '{"pass":true,"summary":"short verdict","issues":[],"nextAction":"complete|retry|fail","progressSummary":"authoritative cycle summary","nextStep":"smallest next step or null","latestBlocker":"blocking reason or null"}',
     'Use nextAction=retry when one more automated fix attempt is likely useful. Use fail when the task needs user input or cannot be judged.',
   ].join('\n');
 }
@@ -12815,19 +12868,33 @@ ${instruction}`;
   return localizedInstruction.trim();
 }
 
-function buildAgentVerifierPrompt(job: AgentJob, result, locale: string | null): string {
+function buildAgentVerifierPrompt(
+  job: AgentJob,
+  result,
+  locale: string | null,
+  context: AgentVerificationContext,
+): string {
   const language = normalizeLocale(locale) === 'zh-CN' ? '中文' : 'English';
+  const activeChecklistItem = context.activeChecklistItem;
   return [
     `你是 CodexBridge 后台 Agent 的 verifier。请用${language}判断任务是否通过。`,
     '只返回严格 JSON，不要 Markdown。',
     'Schema:',
-    '{"pass":true,"summary":"简短结论","issues":[],"nextAction":"complete|retry|fail"}',
+    '{"pass":true,"summary":"简短结论","issues":[],"nextAction":"complete|retry|fail","progressSummary":"本轮权威进展摘要","nextStep":"下一步或 null","latestBlocker":"阻塞原因或 null"}',
     '',
     `目标：${job.goal}`,
     `最终交付物：${job.expectedOutput}`,
-    `计划：${job.plan.join(' / ')}`,
+    `正式 checklist：${job.plan.join(' / ')}`,
+    `验收标准：${job.acceptanceCriteria.join(' / ')}`,
+    `当前 checklist item：${activeChecklistItem ? `[${activeChecklistItem.kind}] ${activeChecklistItem.title}` : 'none'}`,
+    `是否最后一个正式 checklist item：${context.isFinalChecklistItem ? 'yes' : 'no'}`,
     `输出状态：${result?.outputState ?? 'complete'}`,
     `附件数量：${Array.isArray(result?.outputArtifacts) ? result.outputArtifacts.length : 0}`,
+    '',
+    '判断规则：',
+    '1. 优先判断当前正式 checklist item 是否完成，而不是直接按整条任务是否已完全结束来判断。',
+    '2. 只有当这是最后一个正式 checklist item 时，才要求整体目标、最终交付物和验收标准也满足。',
+    '3. progressSummary 必须概括本轮真实进展；nextStep 必须是最小下一步；latestBlocker 无阻塞时返回 null。',
     '',
     '输出内容：',
     truncateText(String(result?.outputText ?? result?.previewText ?? ''), 6000),
@@ -13094,7 +13161,11 @@ function parseAgentVerificationResult(value: unknown): AgentVerificationResult |
     return null;
   }
   const summary = compactWhitespace(parsed.summary ?? parsed.reason ?? '');
+  const normalizedSummary = summary || (Boolean(parsed.pass) ? 'Verifier passed.' : 'Verifier did not pass.');
   const nextAction = normalizeAgentNextAction(parsed.nextAction ?? parsed.next_action);
+  const progressSummary = normalizeNullableText(parsed.progressSummary ?? parsed.progress_summary ?? parsed.latestProgressSummary);
+  const nextStep = normalizeNullableText(parsed.nextStep ?? parsed.next_step);
+  const latestBlocker = normalizeNullableText(parsed.latestBlocker ?? parsed.latest_blocker ?? parsed.blocker);
   if (isAgentVerificationSchemaPlaceholder(summary)) {
     return null;
   }
@@ -13103,9 +13174,12 @@ function parseAgentVerificationResult(value: unknown): AgentVerificationResult |
     : [];
   return {
     pass: Boolean(parsed.pass),
-    summary: summary || (Boolean(parsed.pass) ? 'Verifier passed.' : 'Verifier did not pass.'),
+    summary: normalizedSummary,
     issues,
     nextAction: Boolean(parsed.pass) ? 'complete' : nextAction,
+    progressSummary: progressSummary ?? normalizedSummary,
+    nextStep,
+    latestBlocker,
   };
 }
 

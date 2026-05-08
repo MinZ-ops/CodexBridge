@@ -975,6 +975,19 @@ hardening on top of that baseline:
   blocker, and latest progress summary while preserving the boundary between
   workpad substeps and formal checklist mutation
 
+Phase 9v.b now lands the first plan-first authoritative cycle-progress
+hardening on top of that intake baseline:
+
+- when a mission has a formal `plan[]`, runtime prompt focus, checklist status,
+  and loop snapshots now advance against those confirmed checklist/TODO items
+  instead of implicitly prioritizing acceptance-only items
+- verifier-driven cycle results now persist authoritative progress summaries,
+  next steps, and blockers that hosts can render directly without inferring
+  them from raw free-form text
+- legacy no-plan missions keep the earlier acceptance-first compatibility path,
+  so this hardening improves first-host checklist stewardship without breaking
+  older package/runtime behavior
+
 - [x] Add `WorkItemSourceAdapter` as the source abstraction
 - [x] Support manual host-created source-backed work items through the
   package-owned create command
@@ -1083,7 +1096,7 @@ hardening on top of that baseline:
   / deploy” when a concrete formal checklist can be derived
 - [x] Force scope clarification before draft confirmation when a user goal is
   too broad to yield a trustworthy checklist-backed mission
-- [ ] Require every autonomous cycle to persist authoritative checklist item
+- [x] Require every autonomous cycle to persist authoritative checklist item
   status updates plus:
   - overall completion
   - next step
@@ -1130,7 +1143,7 @@ Completion criteria:
   dedicated create-flow pipeline for add/create intents
 - [x] Broad or underspecified user goals trigger clarification before a formal
   mission checklist is confirmed
-- [ ] Each autonomous cycle persists authoritative checklist/progress updates
+- [x] Each autonomous cycle persists authoritative checklist/progress updates
   that the first host can render directly without inferring TODO state from raw
   text
 - [ ] Checklist refinement suggestions are autonomous but formal checklist
@@ -1210,11 +1223,11 @@ Mission Control is ready for broader extraction when:
   fallback
 - [x] the first host can drive a checklist-backed looping mission as product
   UX without depending on external `loop.sh`
-- [ ] the first host drafts code missions from repo-aware prompt/checklist
+- [x] the first host drafts code missions from repo-aware prompt/checklist
   templates rather than generic lifecycle plans
-- [ ] the first host requires clarification when the requested mission scope is
+- [x] the first host requires clarification when the requested mission scope is
   too broad to produce a trustworthy confirmed checklist
-- [ ] each autonomous cycle updates authoritative checklist/TODO status and
+- [x] each autonomous cycle updates authoritative checklist/TODO status and
   progress fields that hosts can render directly
 - [ ] autonomous checklist refinement can propose concrete changes without
   bypassing formal package-owned approval/change gates

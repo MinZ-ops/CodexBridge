@@ -17,7 +17,7 @@ import {
   applyMissionVerifierResultToChecklistSnapshot,
   completeChecklistSnapshot,
   createMissionCycleResult,
-  getActiveChecklistItem,
+  getActiveFormalChecklistItem,
   getLatestMissionCycleResult,
   listMissionCycleResults,
   mapMissionStatusToMissionControlOutcome,
@@ -955,9 +955,7 @@ export class MissionRuntime {
     const currentChecklistSnapshot = this.repository.getChecklistSnapshotById(
       input.mission.currentChecklistSnapshotId,
     );
-    const activeChecklistItem = getActiveChecklistItem(currentChecklistSnapshot, {
-      preferredKinds: ['acceptance'],
-    });
+    const activeChecklistItem = getActiveFormalChecklistItem(currentChecklistSnapshot);
     const usage = this.resolveBudgetUsage(input.mission.id, input.attempt, this.now());
     const verifierResult = await this.verifier.verify({
       mission: input.mission,
@@ -1012,9 +1010,11 @@ export class MissionRuntime {
     const activeChecklistItemCompleted = currentChecklistSnapshot
       ? activeChecklistItemAfterVerification?.status === 'completed'
       : effectiveResult.verdict === 'complete';
-    const hasAcceptanceItems = currentChecklistSnapshot?.items.some(
-      (item) => item.kind === 'acceptance',
+    const hasPlanChecklistItems = currentChecklistSnapshot?.items.some((item) => item.kind === 'plan') ?? false;
+    const hasRemainingPlanChecklistItems = updatedChecklistSnapshot?.items.some(
+      (item) => item.kind === 'plan' && item.status !== 'completed' && item.status !== 'skipped',
     ) ?? false;
+    const hasAcceptanceItems = currentChecklistSnapshot?.items.some((item) => item.kind === 'acceptance') ?? false;
     const hasRemainingAcceptanceItems = updatedChecklistSnapshot?.items.some(
       (item) => item.kind === 'acceptance' && item.status !== 'completed' && item.status !== 'skipped',
     ) ?? false;
@@ -1025,7 +1025,11 @@ export class MissionRuntime {
       && activeChecklistItemCompleted
       && (
         !updatedChecklistSnapshot
-        || (hasAcceptanceItems ? !hasRemainingAcceptanceItems : !hasRemainingChecklistItems)
+        || (hasPlanChecklistItems
+          ? !hasRemainingPlanChecklistItems
+          : hasAcceptanceItems
+            ? !hasRemainingAcceptanceItems
+            : !hasRemainingChecklistItems)
       );
     if (updatedChecklistSnapshot && canFinalizeMission) {
       updatedChecklistSnapshot = completeChecklistSnapshot(
@@ -1060,12 +1064,13 @@ export class MissionRuntime {
     const continueMission = activeChecklistItemCompleted
       && !canFinalizeMission
       && (effectiveResult.verdict === 'complete' || effectiveResult.verdict === 'repair');
+    const cycleProgressSummary = effectiveResult.progressSummary ?? effectiveResult.summary;
 
     let mission: Mission;
     if (continueMission) {
-      const continuationSummary = activeChecklistItem
+      const continuationSummary = cycleProgressSummary || (activeChecklistItem
         ? `Checklist item complete: ${activeChecklistItem.title}`
-        : 'Checklist item complete. Continue the mission loop.';
+        : 'Checklist item complete. Continue the mission loop.');
       mission = transitionMission(input.mission, 'queued', {
         at: this.now(),
         reason: continuationSummary,
@@ -1089,7 +1094,7 @@ export class MissionRuntime {
         status: 'continue',
         stage: `verifier.${effectiveResult.verdict}`,
         progress: continuationSummary,
-        nextStep: 'Advance to the next checklist item within the same mission generation.',
+        nextStep: effectiveResult.nextStep ?? 'Advance to the next checklist item within the same mission generation.',
         verifierSummary: effectiveResult.summary,
         evidence: {
           verdict: effectiveResult.verdict,
@@ -1141,19 +1146,19 @@ export class MissionRuntime {
         checklistSnapshot: updatedChecklistSnapshot,
         status: 'retry',
         stage: 'verifier.repair',
-        progress: effectiveResult.summary,
-        nextStep: 'Render a repair prompt and retry the mission within budget.',
+        progress: cycleProgressSummary,
+        nextStep: effectiveResult.nextStep ?? 'Render a repair prompt and retry the mission within budget.',
         verifierSummary: effectiveResult.summary,
-        blocker: effectiveResult.summary,
+        blocker: effectiveResult.latestBlocker ?? effectiveResult.summary,
         evidence: {
           missingAcceptanceCriteria: [...effectiveResult.missingAcceptanceCriteria],
         },
       });
-      this.appendMissionEvent(mission, 'mission.retrying', effectiveResult.summary, updatedAttempt, {
+      this.appendMissionEvent(mission, 'mission.retrying', cycleProgressSummary, updatedAttempt, {
         missingAcceptanceCriteria: [...effectiveResult.missingAcceptanceCriteria],
         cycleResult,
       });
-      this.saveCheckpointRecord(mission, updatedAttempt, 'verifier.repair', effectiveResult.summary, {
+      this.saveCheckpointRecord(mission, updatedAttempt, 'verifier.repair', cycleProgressSummary, {
         verdict: effectiveResult.verdict,
         missingAcceptanceCriteria: [...effectiveResult.missingAcceptanceCriteria],
       });
@@ -1166,18 +1171,18 @@ export class MissionRuntime {
         checklistSnapshot: updatedChecklistSnapshot,
         status: cycleStatus,
         stage: `verifier.${effectiveResult.verdict}`,
-        progress: effectiveResult.summary,
+        progress: cycleProgressSummary,
         nextStep: cycleStatus === 'done'
-          ? null
+          ? (effectiveResult.nextStep ?? null)
           : cycleStatus === 'waiting_user'
-            ? 'Wait for user input before resuming the mission.'
+            ? (effectiveResult.nextStep ?? 'Wait for user input before resuming the mission.')
             : cycleStatus === 'needs_human' || cycleStatus === 'handoff'
-              ? 'Wait for human intervention before resuming the mission.'
-              : null,
+              ? (effectiveResult.nextStep ?? 'Wait for human intervention before resuming the mission.')
+              : effectiveResult.nextStep ?? null,
         verifierSummary: effectiveResult.summary,
-        blocker: cycleStatus === 'done' ? null : effectiveResult.summary,
+        blocker: cycleStatus === 'done' ? null : effectiveResult.latestBlocker ?? effectiveResult.summary,
         needUserAction: cycleStatus === 'waiting_user'
-          ? effectiveResult.summary
+          ? effectiveResult.latestBlocker ?? effectiveResult.summary
           : null,
         evidence: {
           verdict: effectiveResult.verdict,
@@ -1188,7 +1193,7 @@ export class MissionRuntime {
       this.appendMissionEvent(
         mission,
         mapMissionTerminalStatusToEventKind(mission.status),
-        effectiveResult.summary,
+        cycleProgressSummary,
         updatedAttempt,
         {
           verdict: effectiveResult.verdict,
@@ -1197,7 +1202,7 @@ export class MissionRuntime {
           cycleResult,
         },
       );
-      this.saveCheckpointRecord(mission, updatedAttempt, `verifier.${effectiveResult.verdict}`, effectiveResult.summary, {
+      this.saveCheckpointRecord(mission, updatedAttempt, `verifier.${effectiveResult.verdict}`, cycleProgressSummary, {
         verdict: effectiveResult.verdict,
         missionStatus: mission.status,
         missingAcceptanceCriteria: [...effectiveResult.missingAcceptanceCriteria],
