@@ -42,6 +42,15 @@ import {
   type CodexInstructionsSnapshot,
 } from '../providers/codex/instructions_state.js';
 import {
+  CodexExperimentalFeaturesManager,
+  getPublicCodexExperimentalFeatures,
+  type CodexExperimentalFeatureInfo,
+} from '../providers/codex/experimental_features_manager.js';
+import {
+  CodexGoalManager,
+  type CodexGoalSnapshot,
+} from '../providers/codex/goal_state.js';
+import {
   CodexNativeApiSideTaskRouter,
   type CodexNativeApiSideTaskClass,
 } from '../providers/codex/native_api_side_task_router.js';
@@ -115,6 +124,7 @@ const THREAD_COMMAND_SKILL_RESULT_LIMIT = 8;
 const THREAD_COMMAND_SKILL_LIST_LIMIT = 100_000;
 const DEFAULT_CODEX_NATIVE_API_HOST = '127.0.0.1';
 const DEFAULT_CODEX_NATIVE_API_PORT = 43182;
+const CODEX_EXPERIMENTAL_PROVIDER_KIND_SET = new Set(['codex', 'openai-native', 'openai-compatible']);
 
 export const AGENT_COMMAND_SKILL_ACTIONS = new Set([
   'create_draft',
@@ -868,6 +878,18 @@ interface CodexInstructionsManagerLike {
   clearInstructions(): Promise<CodexInstructionsSnapshot>;
 }
 
+interface CodexExperimentalFeaturesManagerLike {
+  listFeatures(params?: { codexCliBin?: string | null }): Promise<CodexExperimentalFeatureInfo[]>;
+  enableFeature(featureName: string, params?: { codexCliBin?: string | null }): Promise<void>;
+  disableFeature(featureName: string, params?: { codexCliBin?: string | null }): Promise<void>;
+}
+
+interface CodexGoalManagerLike {
+  readGoal(): Promise<CodexGoalSnapshot>;
+  writeGoal(goal: string): Promise<CodexGoalSnapshot>;
+  clearGoal(): Promise<CodexGoalSnapshot>;
+}
+
 interface HandleWeiboCommandResult {
   limit: number;
 }
@@ -898,6 +920,8 @@ export class BridgeCoordinator {
 
   codexAuthManager: CodexAuthManagerLike | null;
   codexInstructionsManager: CodexInstructionsManagerLike;
+  codexExperimentalFeaturesManager: CodexExperimentalFeaturesManagerLike;
+  codexGoalManager: CodexGoalManagerLike;
   codexNativeRuntime: CodexNativeRuntime;
   codexNativeSideTaskRouter: CodexNativeApiSideTaskRouter;
   now: any;
@@ -931,6 +955,8 @@ export class BridgeCoordinator {
     restartBridge = null,
     codexAuthManager = null,
     codexInstructionsManager = null,
+    codexExperimentalFeaturesManager = null,
+    codexGoalManager = null,
     codexNativeRuntime = null,
     codexNativeSideTaskRouter = null,
     weiboHotSearch = null,
@@ -951,6 +977,8 @@ export class BridgeCoordinator {
     this.weiboHotSearch = weiboHotSearch;
     this.codexAuthManager = codexAuthManager;
     this.codexInstructionsManager = codexInstructionsManager ?? new CodexInstructionsManager();
+    this.codexExperimentalFeaturesManager = codexExperimentalFeaturesManager ?? new CodexExperimentalFeaturesManager();
+    this.codexGoalManager = codexGoalManager ?? new CodexGoalManager();
     this.codexNativeRuntime = codexNativeRuntime ?? new CodexNativeRuntime({ now });
     this.codexNativeSideTaskRouter = codexNativeSideTaskRouter ?? new CodexNativeApiSideTaskRouter({
       runtime: this.codexNativeRuntime,
@@ -1333,6 +1361,10 @@ export class BridgeCoordinator {
         return this.handleModelCommand(event, command.args);
       case 'plan':
         return this.handlePlanCommand(event, command.args);
+      case 'experimental':
+        return this.handleExperimentalCommand(event, command.args);
+      case 'goal':
+        return this.handleGoalCommand(event, command.args);
       case 'personality':
         return this.handlePersonalityCommand(event, command.args);
       case 'instructions':
@@ -1350,7 +1382,14 @@ export class BridgeCoordinator {
   async handleHelpsCommand(event, args) {
     const requested = normalizeHelpTarget(args[0]);
     if (!requested) {
-      return textResponse(renderCommandCatalog(this.currentI18n), this.buildScopedSessionMeta(event));
+      const showGoal = await this.isCodexGoalCommandAvailable();
+      return textResponse(renderCommandCatalog(this.currentI18n, { showGoal }), this.buildScopedSessionMeta(event));
+    }
+    if (requested === 'goal' && !(await this.isCodexGoalCommandAvailable())) {
+      return messageResponse([
+        this.t('coordinator.goal.unavailable'),
+        this.t('coordinator.goal.enableHint'),
+      ], this.buildScopedSessionMeta(event));
     }
     const spec = resolveCommandHelpSpec(requested, this.currentI18n);
     if (!spec) {
@@ -4400,6 +4439,218 @@ export class BridgeCoordinator {
       this.t('coordinator.plan.current', { value: formatPlanMode('plan', this.currentI18n) }),
       this.t('coordinator.permissions.nextTurn'),
     ], buildSessionMeta(ensuredSession));
+  }
+
+  async handleExperimentalCommand(event, args) {
+    const normalizedArgs = Array.isArray(args)
+      ? args.map((arg) => String(arg ?? '').trim()).filter(Boolean)
+      : [];
+    const action = String(normalizedArgs[0] ?? '').trim().toLowerCase();
+    if (!action) {
+      return this.renderExperimentalStatus(event);
+    }
+    if (HELP_FLAG_SET.has(action)) {
+      return this.handleHelpsCommand(event, ['experimental']);
+    }
+    if (action === 'list') {
+      return this.handleExperimentalListCommand(event);
+    }
+    if (action === 'show') {
+      return this.handleExperimentalShowCommand(event, normalizedArgs.slice(1).join(' '));
+    }
+    if (action === 'on' || action === 'enable') {
+      return this.handleExperimentalToggleCommand(event, normalizedArgs.slice(1).join(' '), true);
+    }
+    if (action === 'off' || action === 'disable') {
+      return this.handleExperimentalToggleCommand(event, normalizedArgs.slice(1).join(' '), false);
+    }
+    return this.handleHelpsCommand(event, ['experimental']);
+  }
+
+  async renderExperimentalStatus(event) {
+    try {
+      const features = await this.listCodexExperimentalFeatures();
+      const visibleFeatures = getPublicCodexExperimentalFeatures(features);
+      const enabledVisible = visibleFeatures.filter((feature) => feature.enabled).map((feature) => feature.name);
+      const lines = [
+        this.t('coordinator.experimental.title'),
+        this.t('coordinator.experimental.scope'),
+      ];
+      if (visibleFeatures.length > 0) {
+        visibleFeatures.forEach((feature, index) => {
+          lines.push(...formatExperimentalFeatureLines(feature, this.currentI18n, index + 1));
+        });
+        lines.push(
+          enabledVisible.length > 0
+            ? this.t('coordinator.experimental.currentEnabled', { value: enabledVisible.join(', ') })
+            : this.t('coordinator.experimental.currentNone'),
+        );
+      }
+      lines.push(
+        this.t('coordinator.experimental.usage'),
+        this.t('coordinator.experimental.help'),
+      );
+      return messageResponse(lines, this.buildScopedSessionMeta(event));
+    } catch (error) {
+      return messageResponse([
+        this.t('coordinator.experimental.failed', { error: formatUserError(error) }),
+      ], this.buildScopedSessionMeta(event));
+    }
+  }
+
+  async handleExperimentalListCommand(event) {
+    try {
+      const features = getPublicCodexExperimentalFeatures(await this.listCodexExperimentalFeatures());
+      const lines = [
+        this.t('coordinator.experimental.listTitle', { count: features.length }),
+        this.t('coordinator.experimental.scope'),
+      ];
+      if (features.length === 0) {
+        lines.push(this.t('coordinator.experimental.empty'));
+      } else {
+        features.forEach((feature, index) => {
+          lines.push(...formatExperimentalFeatureLines(feature, this.currentI18n, index + 1));
+        });
+      }
+      return messageResponse(lines, this.buildScopedSessionMeta(event));
+    } catch (error) {
+      return messageResponse([
+        this.t('coordinator.experimental.failed', { error: formatUserError(error) }),
+      ], this.buildScopedSessionMeta(event));
+    }
+  }
+
+  async handleExperimentalShowCommand(event, token) {
+    try {
+      const features = await this.listCodexExperimentalFeatures();
+      const visibleFeatures = getPublicCodexExperimentalFeatures(features);
+      const resolved = resolveExperimentalFeatureSelection(token, visibleFeatures, features);
+      if (!resolved) {
+        return messageResponse([
+          this.t('coordinator.experimental.notFound', { value: String(token ?? '').trim() || '?' }),
+        ], this.buildScopedSessionMeta(event));
+      }
+      return messageResponse([
+        this.t(resolveExperimentalFeatureTitleKey(resolved.feature.name)),
+        this.t('coordinator.experimental.nameLabel', { value: resolved.feature.name }),
+        this.t('coordinator.experimental.maturityLabel', {
+          value: formatExperimentalMaturityLabel(resolved.feature.maturity, this.currentI18n),
+        }),
+        this.t('coordinator.experimental.statusLabel', {
+          value: resolved.feature.enabled ? this.t('common.enabled') : this.t('common.disabled'),
+        }),
+        this.t(resolveExperimentalFeatureDescriptionKey(resolved.feature.name)),
+        this.t('coordinator.experimental.scope'),
+        this.t('coordinator.experimental.showActions', { value: resolved.feature.name }),
+      ], this.buildScopedSessionMeta(event));
+    } catch (error) {
+      return messageResponse([
+        this.t('coordinator.experimental.failed', { error: formatUserError(error) }),
+      ], this.buildScopedSessionMeta(event));
+    }
+  }
+
+  async handleExperimentalToggleCommand(event, token, enabled) {
+    if (!String(token ?? '').trim()) {
+      return this.handleHelpsCommand(event, ['experimental']);
+    }
+    const busyResponse = await this.rejectIfActiveTurnForGlobalExperimentalCommand(event);
+    if (busyResponse) {
+      return busyResponse;
+    }
+    try {
+      const features = await this.listCodexExperimentalFeatures();
+      const visibleFeatures = getPublicCodexExperimentalFeatures(features);
+      const resolved = resolveExperimentalFeatureSelection(token, visibleFeatures, features);
+      if (!resolved) {
+        return messageResponse([
+          this.t('coordinator.experimental.notFound', { value: String(token ?? '').trim() || '?' }),
+        ], this.buildScopedSessionMeta(event));
+      }
+      const cliBin = this.resolveCodexExperimentalCliBin();
+      if (enabled) {
+        await this.codexExperimentalFeaturesManager.enableFeature(resolved.feature.name, { codexCliBin: cliBin });
+      } else {
+        await this.codexExperimentalFeaturesManager.disableFeature(resolved.feature.name, { codexCliBin: cliBin });
+      }
+      await this.resetCodexExperimentalClients();
+      return messageResponse([
+        enabled
+          ? this.t('coordinator.experimental.enabled', { value: resolved.feature.name })
+          : this.t('coordinator.experimental.disabled', { value: resolved.feature.name }),
+        this.t('coordinator.experimental.saved'),
+        this.t('coordinator.experimental.reconnectNotice'),
+      ], this.buildScopedSessionMeta(event));
+    } catch (error) {
+      return messageResponse([
+        this.t('coordinator.experimental.failed', { error: formatUserError(error) }),
+      ], this.buildScopedSessionMeta(event));
+    }
+  }
+
+  async handleGoalCommand(event, args) {
+    if (!(await this.isCodexGoalCommandAvailable())) {
+      return messageResponse([
+        this.t('coordinator.goal.unavailable'),
+        this.t('coordinator.goal.enableHint'),
+      ], this.buildScopedSessionMeta(event));
+    }
+    const normalizedArgs = args.map((arg) => String(arg ?? '').trim()).filter(Boolean);
+    if (normalizedArgs.length === 0) {
+      return this.renderGoalStatus(event);
+    }
+    const action = normalizedArgs[0]?.toLowerCase() ?? '';
+    if (action === 'clear' || action === 'reset' || action === 'off') {
+      return this.clearGlobalGoal(event);
+    }
+    if (action === 'show' || action === 'status') {
+      return this.renderGoalStatus(event);
+    }
+    if (action === 'set') {
+      const nextGoal = normalizedArgs.slice(1).join(' ').trim();
+      if (!nextGoal) {
+        return this.handleHelpsCommand(event, ['goal']);
+      }
+      return this.saveGlobalGoal(event, nextGoal);
+    }
+    return this.saveGlobalGoal(event, normalizedArgs.join(' '));
+  }
+
+  async renderGoalStatus(event) {
+    const snapshot = await this.codexGoalManager.readGoal();
+    const lines = [
+      this.t('coordinator.goal.title'),
+      this.t('coordinator.goal.scope'),
+    ];
+    if (snapshot.exists && snapshot.goal) {
+      lines.push(this.t('coordinator.goal.currentLabel'));
+      lines.push(snapshot.goal);
+    } else {
+      lines.push(this.t('coordinator.goal.currentNone'));
+    }
+    lines.push(
+      this.t('coordinator.goal.usage'),
+      this.t('coordinator.goal.help'),
+    );
+    return messageResponse(lines, this.buildScopedSessionMeta(event));
+  }
+
+  async saveGlobalGoal(event, goalText: string) {
+    const snapshot = await this.codexGoalManager.writeGoal(goalText);
+    return messageResponse([
+      this.t('coordinator.goal.saved'),
+      this.t('coordinator.goal.currentLabel'),
+      snapshot.goal,
+      this.t('coordinator.goal.applyNextTurn'),
+    ], this.buildScopedSessionMeta(event));
+  }
+
+  async clearGlobalGoal(event) {
+    await this.codexGoalManager.clearGoal();
+    return messageResponse([
+      this.t('coordinator.goal.cleared'),
+      this.t('coordinator.goal.applyNextTurn'),
+    ], this.buildScopedSessionMeta(event));
   }
 
   async handlePersonalityCommand(event, args) {
@@ -8495,6 +8746,80 @@ export class BridgeCoordinator {
     }), current ? buildSessionMeta(current) : undefined);
   }
 
+  async listCodexExperimentalFeatures(): Promise<CodexExperimentalFeatureInfo[]> {
+    return this.codexExperimentalFeaturesManager.listFeatures({
+      codexCliBin: this.resolveCodexExperimentalCliBin(),
+    });
+  }
+
+  async isCodexExperimentalFeatureEnabled(featureName: string): Promise<boolean> {
+    const normalizedName = String(featureName ?? '').trim().toLowerCase();
+    if (!normalizedName) {
+      return false;
+    }
+    const features = await this.listCodexExperimentalFeatures();
+    return features.some((feature) => feature.name.toLowerCase() === normalizedName && feature.enabled);
+  }
+
+  async isCodexGoalCommandAvailable(): Promise<boolean> {
+    return this.isCodexExperimentalFeatureEnabled('goals');
+  }
+
+  async withGlobalGoalContext(event, providerProfile) {
+    if (!CODEX_EXPERIMENTAL_PROVIDER_KIND_SET.has(String(providerProfile?.providerKind ?? ''))) {
+      return event;
+    }
+    const snapshot = await this.codexGoalManager.readGoal();
+    if (!snapshot.exists || !snapshot.goal) {
+      return event;
+    }
+    if (!(await this.isCodexGoalCommandAvailable())) {
+      return event;
+    }
+    return withCodexbridgeMetadata(event, {
+      goalContext: {
+        scope: 'global',
+        goal: snapshot.goal,
+      },
+    });
+  }
+
+  resolveCodexExperimentalCliBin(): string {
+    const profiles = typeof this.providerProfiles?.list === 'function'
+      ? this.providerProfiles.list()
+      : [];
+    const preferredProfiles = profiles.filter((profile) => CODEX_EXPERIMENTAL_PROVIDER_KIND_SET.has(String(profile?.providerKind ?? '')));
+    for (const profile of preferredProfiles) {
+      const config = profile?.config ?? {};
+      const cliBin = typeof config.cliBin === 'string' ? config.cliBin.trim() : '';
+      if (cliBin) {
+        return cliBin;
+      }
+    }
+    return 'codex';
+  }
+
+  async rejectIfActiveTurnForGlobalExperimentalCommand(event) {
+    const activeResponse = await this.rejectIfActiveTurnForCommand(event, 'experimental');
+    if (activeResponse) {
+      return activeResponse;
+    }
+    if (this.activeTurns?.hasAnyActiveTurn?.()) {
+      return messageResponse([
+        this.t('coordinator.experimental.busyGlobal'),
+      ], this.buildScopedSessionMeta(event));
+    }
+    return null;
+  }
+
+  async resetCodexExperimentalClients(): Promise<void> {
+    const providers = typeof this.providerRegistry?.listProviders === 'function'
+      ? this.providerRegistry.listProviders()
+      : [];
+    const codexBackedProviders = providers.filter((provider) => CODEX_EXPERIMENTAL_PROVIDER_KIND_SET.has(String(provider?.kind ?? '')) && typeof provider?.stop === 'function');
+    await Promise.allSettled(codexBackedProviders.map((provider) => provider.stop()));
+  }
+
   buildScopedSessionMeta(event) {
     const session = this.resolveSessionForEvent(toScopeRef(event), event);
     return session ? buildSessionMeta(session) : undefined;
@@ -10644,7 +10969,8 @@ export class BridgeCoordinator {
     });
     const pendingArtifactDelivery = createPendingTurnArtifactDeliveryState(turnArtifactContext);
     ensureTurnArtifactDirectories(turnArtifactContext);
-    const turnEvent = withTurnArtifactContext(event, turnArtifactContext);
+    const goalAwareEvent = await this.withGlobalGoalContext(event, providerProfile);
+    const turnEvent = withTurnArtifactContext(goalAwareEvent, turnArtifactContext);
     this.activeTurns?.updateScopeTurn(scopeRef, {
       bridgeSessionId: session.id,
       providerProfileId: session.providerProfileId,
@@ -17260,13 +17586,20 @@ function resolveCommandHelpSpec(name, i18n: Translator) {
   return canonical ? specs[canonical] ?? null : null;
 }
 
-function renderCommandCatalog(i18n: Translator) {
+function renderCommandCatalog(i18n: Translator, {
+  showGoal = true,
+}: {
+  showGoal?: boolean;
+} = {}) {
   const specs = getCommandHelpSpecs(i18n);
   const lines = [
     i18n.t('coordinator.help.catalogTitle'),
     '',
   ];
   for (const commandName of COMMAND_HELP_ORDER) {
+    if (!showGoal && commandName === 'goal') {
+      continue;
+    }
     const spec = specs[commandName];
     const aliasLabel = spec.aliases.length > 0 ? ` (${spec.aliases.map((alias) => `/${alias}`).join(', ')})` : '';
     lines.push(`/${spec.name}${aliasLabel} ${spec.summary}`);
@@ -17863,6 +18196,50 @@ function getCommandHelpSpecs(i18n: Translator) {
       i18n.t('coordinator.help.note.plan'),
     ],
   }),
+  experimental: freezeCommandHelp({
+    name: 'experimental',
+    aliases: ['experiment', 'experiments', 'exp'],
+    summary: i18n.t('coordinator.help.summary.experimental'),
+    usage: [
+      '/experimental',
+      '/experimental list',
+      '/experimental show <序号|featureName>',
+      '/experimental on <序号|featureName>',
+      '/experimental off <序号|featureName>',
+      '/experimental -h',
+    ],
+    examples: [
+      '/experimental',
+      '/experimental list',
+      '/experimental show memories',
+      '/experimental on memories',
+      '/experimental off prevent_idle_sleep',
+    ],
+    notes: [
+      i18n.t('coordinator.help.note.experimental'),
+    ],
+  }),
+  goal: freezeCommandHelp({
+    name: 'goal',
+    aliases: [],
+    summary: i18n.t('coordinator.help.summary.goal'),
+    usage: [
+      '/goal',
+      '/goal <text>',
+      '/goal set <text>',
+      '/goal clear',
+      '/goal -h',
+    ],
+    examples: [
+      '/goal',
+      '/goal 持续把 CodexBridge 的微信体验打磨到更稳定',
+      '/goal set Keep CodexBridge focused on reliable WeChat delivery.',
+      '/goal clear',
+    ],
+    notes: [
+      i18n.t('coordinator.help.note.goal'),
+    ],
+  }),
   personality: freezeCommandHelp({
     name: 'personality',
     aliases: ['psn'],
@@ -18215,6 +18592,8 @@ const COMMAND_HELP_ORDER = Object.freeze([
   'models',
   'model',
   'plan',
+  'experimental',
+  'goal',
   'personality',
   'instructions',
   'fast',
@@ -18264,6 +18643,8 @@ const COMMAND_ALIAS_DEFINITIONS = Object.freeze({
   models: ['ms'],
   model: ['m'],
   plan: ['pl'],
+  experimental: ['experiment', 'experiments', 'exp'],
+  goal: [],
   personality: ['psn'],
   instructions: ['ins'],
   fast: [],
@@ -20544,6 +20925,68 @@ function formatPersonality(value, i18n: Translator) {
     return i18n.t('common.default');
   }
   return normalized;
+}
+
+function normalizeCodexExperimentalMaturity(value: string | null | undefined): string {
+  return String(value ?? '').trim().toLowerCase();
+}
+
+function formatExperimentalMaturityLabel(value: string, i18n: Translator): string {
+  switch (normalizeCodexExperimentalMaturity(value)) {
+    case 'stable':
+      return i18n.t('coordinator.experimental.maturity.stable');
+    case 'experimental':
+      return i18n.t('coordinator.experimental.maturity.experimental');
+    case 'under development':
+      return i18n.t('coordinator.experimental.maturity.underDevelopment');
+    case 'deprecated':
+      return i18n.t('coordinator.experimental.maturity.deprecated');
+    case 'removed':
+      return i18n.t('coordinator.experimental.maturity.removed');
+    default:
+      return value || i18n.t('common.unknown');
+  }
+}
+
+function formatExperimentalFeatureLines(
+  feature: CodexExperimentalFeatureInfo,
+  i18n: Translator,
+  index: number,
+): string[] {
+  return [
+    `${index}. [${feature.enabled ? 'x' : ' '}] ${i18n.t(resolveExperimentalFeatureTitleKey(feature.name))}`,
+    `   ${i18n.t(resolveExperimentalFeatureDescriptionKey(feature.name))}`,
+  ];
+}
+
+function resolveExperimentalFeatureTitleKey(featureName: string): string {
+  return `coordinator.experimental.feature.${featureName}.title`;
+}
+
+function resolveExperimentalFeatureDescriptionKey(featureName: string): string {
+  return `coordinator.experimental.feature.${featureName}.description`;
+}
+
+function resolveExperimentalFeatureSelection(
+  token: string,
+  visibleFeatures: readonly CodexExperimentalFeatureInfo[],
+  allFeatures: readonly CodexExperimentalFeatureInfo[],
+): { feature: CodexExperimentalFeatureInfo; index: number | null } | null {
+  const normalized = String(token ?? '').trim();
+  if (!normalized) {
+    return null;
+  }
+  if (/^\d+$/u.test(normalized)) {
+    const index = Number(normalized);
+    if (!Number.isInteger(index) || index < 1) {
+      return null;
+    }
+    const feature = visibleFeatures[index - 1] ?? null;
+    return feature ? { feature, index } : null;
+  }
+  const lowered = normalized.toLowerCase();
+  const feature = allFeatures.find((entry) => entry.name.toLowerCase() === lowered) ?? null;
+  return feature ? { feature, index: null } : null;
 }
 
 function formatInstructionsStatus(hasInstructions: boolean, i18n: Translator) {

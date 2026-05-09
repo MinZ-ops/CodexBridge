@@ -103,6 +103,9 @@ It borrows the most useful CLI help conventions while staying chat-friendly:
 /model default
 /models
 /ms
+/experimental
+/exp list
+/experimental on memories
 /lang zh
 /
 /personality
@@ -346,6 +349,58 @@ Notes:
 - this is a session-level collaboration mode toggle, not an approval flow
 - when enabled, later normal messages start in native `plan` mode
 - when disabled, later normal messages return to native `default` mode
+
+### `/experimental`, `/experiment`, `/experiments`, and `/exp`
+
+Inspect or change the official global Codex feature flags.
+
+- `/experimental` shows the current global experimental feature state
+- `/experimental list` lists visible feature flags from `codex features list`
+- `/experimental show <index|featureName>` shows one feature in detail
+- `/experimental on <index|featureName>` globally enables one feature
+- `/experimental off <index|featureName>` globally disables one feature
+- when `goals` is enabled, `/goal` becomes available as an additional slash command
+
+Examples:
+
+```text
+/experimental
+/exp list
+/experimental show memories
+/experimental on memories
+/experimental off prevent_idle_sleep
+```
+
+Notes:
+
+- this command follows the official Codex CLI semantics: it changes the global Codex feature config, not just the current session
+- new sessions inherit the new setting automatically
+- CodexBridge resets local Codex clients after a change, so the next reply uses the new configuration
+- removed and deprecated features are hidden by default
+
+### `/goal`
+
+Only available when `/experimental on goals` has been enabled.
+
+- `/goal` shows the current global goal
+- `/goal <text>` sets the global goal directly
+- `/goal set <text>` sets the global goal explicitly
+- `/goal clear` removes the global goal
+
+Examples:
+
+```text
+/goal
+/goal 持续把 CodexBridge 的微信体验打磨到更稳定
+/goal set Keep CodexBridge focused on reliable WeChat delivery.
+/goal clear
+```
+
+Notes:
+
+- this is a global Codex goal, not a session-only hint
+- standard user-facing turns automatically inherit the goal context
+- internal parsing, review localization, and similar hidden bridge turns do not inherit it
 
 ### `/skills` and `/sk`
 
