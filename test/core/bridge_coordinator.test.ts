@@ -60,6 +60,7 @@ class FakeProviderPlugin {
   appEntries: any[];
   mcpServerStatuses: any[];
   mcpEnabledByName: Map<any, any>;
+  stopCalls: any[];
   threadCounter: number;
   baseTime: number;
   clock: number;
@@ -178,6 +179,7 @@ class FakeProviderPlugin {
     this.appEntries = [];
     this.mcpServerStatuses = [];
     this.mcpEnabledByName = new Map();
+    this.stopCalls = [];
     this.threadCounter = 0;
     this.baseTime = Date.now();
     this.clock = 0;
@@ -203,6 +205,10 @@ class FakeProviderPlugin {
     };
     this.threads.set(thread.threadId, thread);
     return thread;
+  }
+
+  async stop() {
+    this.stopCalls.push({ at: Date.now() });
   }
 
   async readThread({ threadId, includeTurns = false }) {
@@ -510,13 +516,13 @@ class FakeProviderPlugin {
   }
 }
 
-function makeProviderProfile(id, providerKind, displayName) {
+function makeProviderProfile(id, providerKind, displayName, config = {}) {
   const now = Date.now();
   return {
     id,
     providerKind,
     displayName,
-    config: {},
+    config,
     createdAt: now,
     updatedAt: now,
   };
@@ -531,6 +537,8 @@ function makeRuntime({
   platformPlugins = [],
   codexAuthManager = null,
   codexInstructionsManager = null,
+  codexExperimentalFeaturesManager = null,
+  codexGoalManager = null,
   codexNativeSideTaskRouter = null,
   weiboHotSearch = null,
 } = {}) {
@@ -549,10 +557,88 @@ function makeRuntime({
     restartBridge,
     codexAuthManager,
     codexInstructionsManager,
+    codexExperimentalFeaturesManager,
+    codexGoalManager,
     codexNativeSideTaskRouter,
     weiboHotSearch,
   });
   return { runtime, openai, compatible, minimax: compatible };
+}
+
+function makeFakeCodexExperimentalFeaturesManager(initialFeatures = []) {
+  const state = {
+    features: initialFeatures.map((feature) => ({
+      name: String(feature.name ?? ''),
+      maturity: String(feature.maturity ?? 'experimental'),
+      enabled: Boolean(feature.enabled),
+    })),
+  };
+  const calls: Array<{ kind: string; featureName?: string | null; cliBin?: string | null }> = [];
+  return {
+    calls,
+    state,
+    async listFeatures({ codexCliBin = null } = {}) {
+      calls.push({ kind: 'list', cliBin: codexCliBin });
+      return state.features.map((feature) => ({ ...feature }));
+    },
+    async enableFeature(featureName: string, { codexCliBin = null } = {}) {
+      calls.push({ kind: 'enable', featureName, cliBin: codexCliBin });
+      const current = state.features.find((feature) => feature.name === featureName);
+      if (current) {
+        current.enabled = true;
+        return;
+      }
+      state.features.push({
+        name: featureName,
+        maturity: 'experimental',
+        enabled: true,
+      });
+    },
+    async disableFeature(featureName: string, { codexCliBin = null } = {}) {
+      calls.push({ kind: 'disable', featureName, cliBin: codexCliBin });
+      const current = state.features.find((feature) => feature.name === featureName);
+      if (current) {
+        current.enabled = false;
+      }
+    },
+  };
+}
+
+function makeFakeCodexGoalManager(initialGoal = '') {
+  const state = {
+    goal: String(initialGoal ?? '').trim(),
+  };
+  const calls: Array<{ kind: string; goal?: string | null }> = [];
+  return {
+    state,
+    calls,
+    async readGoal() {
+      calls.push({ kind: 'read' });
+      return {
+        path: '/tmp/codex-goal.txt',
+        goal: state.goal,
+        exists: Boolean(state.goal),
+      };
+    },
+    async writeGoal(goal: string) {
+      state.goal = String(goal ?? '').trim();
+      calls.push({ kind: 'write', goal: state.goal });
+      return {
+        path: '/tmp/codex-goal.txt',
+        goal: state.goal,
+        exists: Boolean(state.goal),
+      };
+    },
+    async clearGoal() {
+      state.goal = '';
+      calls.push({ kind: 'clear' });
+      return {
+        path: '/tmp/codex-goal.txt',
+        goal: '',
+        exists: false,
+      };
+    },
+  };
 }
 
 function createMissionControlDraftRepo() {
@@ -4607,6 +4693,175 @@ test('/plan shows current mode and updates the next turn collaboration mode', as
   });
   assert.equal(disabled.messages[0]?.text ?? '', '计划模式已关闭，已恢复默认协作模式。');
   assert.equal(disabled.messages[1]?.text ?? '', '当前计划模式：（默认）');
+});
+
+test('/experimental reads and updates official global Codex feature flags', async () => {
+  const codexExperimentalFeaturesManager = makeFakeCodexExperimentalFeaturesManager([
+    { name: 'terminal_resize_reflow', maturity: 'experimental', enabled: true },
+    { name: 'memories', maturity: 'experimental', enabled: false },
+    { name: 'external_migration', maturity: 'experimental', enabled: false },
+    { name: 'prevent_idle_sleep', maturity: 'experimental', enabled: false },
+    { name: 'goals', maturity: 'under development', enabled: false },
+    { name: 'image_generation', maturity: 'stable', enabled: true },
+    { name: 'web_search_cached', maturity: 'deprecated', enabled: false },
+  ]);
+  const providerProfiles = [
+    makeProviderProfile('openai-default', 'openai-native', 'OpenAI Default', {
+      cliBin: '/opt/codex/bin/codex',
+    }),
+    makeProviderProfile('compat-default', 'openai-compatible', 'Compatible Default'),
+  ];
+  const { runtime, openai, compatible } = makeRuntime({
+    providerProfiles,
+    codexExperimentalFeaturesManager,
+  });
+
+  const current = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-exp-1',
+    text: '/experimental',
+  });
+  const currentText = current.messages.map((message) => message.text ?? '').join('\n');
+  assert.match(currentText, /Codex 全局实验功能/);
+  assert.match(currentText, /作用域：整个 Codex 系统/);
+  assert.match(currentText, /1\. \[x\] 终端重排回流/);
+  assert.match(currentText, /2\. \[ \] 记忆/);
+  assert.match(currentText, /3\. \[ \] 外部迁移/);
+  assert.match(currentText, /4\. \[ \] 目标/);
+  assert.match(currentText, /5\. \[ \] 运行时防休眠/);
+  assert.match(currentText, /当前已开启：terminal_resize_reflow/);
+  assert.doesNotMatch(currentText, /web_search_cached/);
+  assert.doesNotMatch(currentText, /image_generation/);
+
+  const listed = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-exp-1',
+    text: '/experimental list',
+  });
+  const listText = listed.messages.map((message) => message.text ?? '').join('\n');
+  assert.match(listText, /官方实验功能：5 项/);
+  assert.match(listText, /4\. \[ \] 目标/);
+  assert.doesNotMatch(listText, /image_generation/);
+
+  const shown = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-exp-1',
+    text: '/experimental show memories',
+  });
+  assert.equal(shown.messages[0]?.text ?? '', '记忆');
+  assert.equal(shown.messages[1]?.text ?? '', '名称：memories');
+  assert.equal(shown.messages[2]?.text ?? '', '成熟度：experimental');
+  assert.equal(shown.messages[3]?.text ?? '', '当前状态：关闭');
+
+  const enabled = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-exp-1',
+    text: '/experimental on memories',
+  });
+  assert.equal(enabled.messages[0]?.text ?? '', '已全局开启实验功能：memories');
+  assert.equal(enabled.messages[1]?.text ?? '', '已写入官方 Codex feature 配置。');
+  assert.equal(enabled.messages[2]?.text ?? '', '本地 Codex client 已重置；下一轮会自动使用新配置。');
+  assert.equal(codexExperimentalFeaturesManager.state.features.find((feature) => feature.name === 'memories')?.enabled, true);
+  assert.equal(openai.stopCalls.length, 1);
+  assert.equal(compatible.stopCalls.length, 1);
+
+  const disabled = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-exp-1',
+    text: '/experimental off 2',
+  });
+  assert.equal(disabled.messages[0]?.text ?? '', '已全局关闭实验功能：memories');
+  assert.equal(codexExperimentalFeaturesManager.state.features.find((feature) => feature.name === 'memories')?.enabled, false);
+  assert.equal(openai.stopCalls.length, 2);
+  assert.equal(compatible.stopCalls.length, 2);
+
+  assert.deepEqual(codexExperimentalFeaturesManager.calls.slice(0, 6), [
+    { kind: 'list', cliBin: '/opt/codex/bin/codex' },
+    { kind: 'list', cliBin: '/opt/codex/bin/codex' },
+    { kind: 'list', cliBin: '/opt/codex/bin/codex' },
+    { kind: 'list', cliBin: '/opt/codex/bin/codex' },
+    { kind: 'enable', featureName: 'memories', cliBin: '/opt/codex/bin/codex' },
+    { kind: 'list', cliBin: '/opt/codex/bin/codex' },
+  ]);
+});
+
+test('/goal stays hidden until goals is enabled and then manages a global persistent goal', async () => {
+  const codexExperimentalFeaturesManager = makeFakeCodexExperimentalFeaturesManager([
+    { name: 'terminal_resize_reflow', maturity: 'experimental', enabled: true },
+    { name: 'memories', maturity: 'experimental', enabled: false },
+    { name: 'external_migration', maturity: 'experimental', enabled: false },
+    { name: 'goals', maturity: 'experimental', enabled: false },
+    { name: 'prevent_idle_sleep', maturity: 'experimental', enabled: false },
+  ]);
+  const codexGoalManager = makeFakeCodexGoalManager('');
+  const { runtime, openai } = makeRuntime({
+    codexExperimentalFeaturesManager,
+    codexGoalManager,
+  });
+
+  const hiddenCatalog = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-goal-1',
+    text: '/helps',
+  });
+  const hiddenText = hiddenCatalog.messages.map((message) => message.text ?? '').join('\n');
+  assert.doesNotMatch(hiddenText, /\/goal\b/);
+
+  const unavailable = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-goal-1',
+    text: '/goal',
+  });
+  assert.equal(unavailable.messages[0]?.text ?? '', 'goals 实验功能当前未开启，所以 /goal 还不可用。');
+
+  await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-goal-1',
+    text: '/experimental on goals',
+  });
+
+  const visibleCatalog = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-goal-1',
+    text: '/helps',
+  });
+  const visibleText = visibleCatalog.messages.map((message) => message.text ?? '').join('\n');
+  assert.match(visibleText, /\/goal 设置或查看官方 goals 实验功能对应的全局目标/);
+
+  const emptyGoal = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-goal-1',
+    text: '/goal',
+  });
+  assert.equal(emptyGoal.messages[0]?.text ?? '', 'Codex 全局目标');
+  assert.equal(emptyGoal.messages[2]?.text ?? '', '当前还没有设置全局目标。');
+
+  const saved = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-goal-1',
+    text: '/goal 持续把 CodexBridge 的微信体验打磨到更稳定',
+  });
+  assert.equal(saved.messages[0]?.text ?? '', '已保存全局目标。');
+  assert.equal(codexGoalManager.state.goal, '持续把 CodexBridge 的微信体验打磨到更稳定');
+
+  await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-goal-1',
+    text: '继续处理当前问题',
+  });
+  const lastTurn = openai.startTurnCalls.at(-1);
+  assert.equal(
+    lastTurn?.event?.metadata?.codexbridge?.goalContext?.goal,
+    '持续把 CodexBridge 的微信体验打磨到更稳定',
+  );
+
+  const cleared = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-goal-1',
+    text: '/goal clear',
+  });
+  assert.equal(cleared.messages[0]?.text ?? '', '已清除全局目标。');
+  assert.equal(codexGoalManager.state.goal, '');
 });
 
 test('legacy service tier values are normalized to fast/flex in status output', async () => {

@@ -554,7 +554,7 @@ test('CodexAppClient startTurn forwards explicit local-image input arrays unchan
   assert.deepEqual(turnStart.input, input);
 });
 
-test('CodexAppClient startServer enables image generation when spawning app-server', async () => {
+test('CodexAppClient startServer inherits the default Codex feature config when spawning app-server', async () => {
   const calls = [];
   const child = new EventEmitter() as EventEmitter & {
     stderr: EventEmitter;
@@ -581,8 +581,8 @@ test('CodexAppClient startServer enables image generation when spawning app-serv
   assert.equal(calls.length, 1);
   assert.equal(calls[0]?.command, 'codex');
   assert.equal(calls[0]?.args?.[0], 'app-server');
-  assert.deepEqual(calls[0]?.args?.slice(1, 4), ['--enable', 'image_generation', '--listen']);
-  assert.match(String(calls[0]?.args?.[4]), /^ws:\/\/127\.0\.0\.1:\d+$/);
+  assert.deepEqual(calls[0]?.args?.slice(1, 2), ['--listen']);
+  assert.match(String(calls[0]?.args?.[2]), /^ws:\/\/127\.0\.0\.1:\d+$/);
 });
 
 test('CodexAppClient startServer prepends configured Codex CLI args', async () => {
@@ -646,7 +646,7 @@ test('CodexAppClient startServer wraps Windows cmd launchers through cmd.exe', a
   assert.equal(calls[0]?.args, null);
   assert.equal(calls[0]?.options?.shell, true);
   assert.equal(calls[0]?.options?.windowsHide, true);
-  assert.match(String(calls[0]?.command), /^"C:\\Program Files\\Codex\\codex\.cmd" app-server --enable image_generation --listen ws:\/\/127\.0\.0\.1:\d+$/);
+  assert.match(String(calls[0]?.command), /^"C:\\Program Files\\Codex\\codex\.cmd" app-server --listen ws:\/\/127\.0\.0\.1:\d+$/);
 });
 
 test('CodexAppClient startServer surfaces a helpful Windows Codex ENOENT error', async () => {

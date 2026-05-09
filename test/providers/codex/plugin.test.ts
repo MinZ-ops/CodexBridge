@@ -169,6 +169,55 @@ test('CodexProviderPlugin uses per-profile clients and forwards default model in
   assert.match(String(seenDeveloperInstructions ?? ''), /thread\/session lifecycle, slash-command state transitions, and final platform delivery/i);
 });
 
+test('CodexProviderPlugin injects the global goal context into standard user-facing turns', async () => {
+  let seenDeveloperInstructions = null;
+  const plugin = makePlugin(() => ({
+    async start() {},
+    async startTurn(params: any) {
+      seenDeveloperInstructions = params.developerInstructions;
+      return {
+        outputText: 'done',
+        threadId: params.threadId,
+        title: null,
+      };
+    },
+    async listModels() {
+      return [{
+        id: 'gpt-5.4',
+        model: 'gpt-5.4',
+        displayName: 'GPT-5.4',
+        description: '',
+        isDefault: true,
+        supportedReasoningEfforts: ['low', 'medium', 'high'],
+        defaultReasoningEffort: 'medium',
+      }];
+    },
+  }));
+
+  await plugin.startTurn({
+    providerProfile: makeProfile({ defaultModel: 'gpt-5.4' }),
+    bridgeSession: makeBridgeSession({ codexThreadId: 'thread-1' }),
+    sessionSettings: makeSessionSettings(),
+    event: {
+      platform: 'weixin',
+      externalScopeId: 'wxid_goal',
+      text: 'hello',
+      metadata: {
+        codexbridge: {
+          goalContext: {
+            scope: 'global',
+            goal: 'Keep CodexBridge focused on reliable WeChat delivery.',
+          },
+        },
+      },
+    },
+    inputText: 'hello',
+  });
+
+  assert.match(String(seenDeveloperInstructions ?? ''), /CodexBridge global goal:/);
+  assert.match(String(seenDeveloperInstructions ?? ''), /Keep CodexBridge focused on reliable WeChat delivery\./);
+});
+
 test('CodexProviderPlugin clamps unsupported reasoning efforts to the model fallback', async () => {
   const seenEfforts: any[] = [];
   const plugin = makePlugin(() => ({

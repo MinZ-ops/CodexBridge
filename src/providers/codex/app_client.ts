@@ -365,7 +365,7 @@ export class CodexAppClient extends EventEmitter {
     autolaunch = false,
     modelCatalog = [],
     modelCatalogMode = 'merge',
-    enabledFeatures = ['image_generation'],
+    enabledFeatures = [],
     clientInfo = {
       name: 'codexbridge',
       title: 'CodexBridge',
