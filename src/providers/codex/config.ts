@@ -263,7 +263,6 @@ function buildPresetOpenAICompatibleProfile({
     ?? normalizeString(env[`${prefix}_DEFAULT_MODEL`])
     ?? normalizeString(env[`${prefix}_MODEL`])
     ?? (alternativeModelEnv ? normalizeString(env[alternativeModelEnv]) : null)
-    ?? resolveAgentModelFallbackForBaseUrl(env, preset.baseUrl)
     ?? preset.defaultModel;
   const baseUrl = normalizeString(env[`${prefix}_BASE_URL`])
     ?? (alternativeBaseUrlEnv ? normalizeString(env[alternativeBaseUrlEnv]) : null)
@@ -677,14 +676,6 @@ function parseOptionalBoolean(value: unknown): boolean | null {
     return null;
   }
   return normalized !== 'false' && normalized !== '0';
-}
-
-function resolveAgentModelFallbackForBaseUrl(env: NodeJS.ProcessEnv, baseUrl: string): string | null {
-  const agentBaseUrl = normalizeString(env.CODEXBRIDGE_AGENT_BASE_URL);
-  if (!agentBaseUrl || !agentBaseUrl.toLowerCase().includes(baseUrl.toLowerCase().replace(/^https?:\/\//u, '').split('/')[0] ?? '')) {
-    return null;
-  }
-  return normalizeString(env.CODEXBRIDGE_AGENT_MODEL);
 }
 
 function toEnvToken(value: string): string {

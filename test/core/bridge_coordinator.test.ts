@@ -6,7 +6,6 @@ import path from 'node:path';
 import test from 'node:test';
 import {
   AUTO_COMMAND_SKILL_ACTIONS,
-  resolveOpenAIAgentRuntimeConfig,
   AGENT_COMMAND_SKILL_ACTIONS,
   INSTRUCTIONS_COMMAND_SKILL_ACTIONS,
   REVIEW_COMMAND_SKILL_ACTIONS,
@@ -3025,6 +3024,53 @@ test('/as edit modifies the pending assistant record instead of replacing it', a
   assert.equal(new Date(after?.remindAt ?? 0).getHours(), 11);
   assert.deepEqual(after?.tags, ['客户', '重要客户']);
   assert.match(after?.originalText ?? '', /修改提示/);
+});
+
+test('/as falls back to the bound provider classifier when the assistant command skill returns unparseable output', async () => {
+  const defaultCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'codexbridge-assistant-provider-fallback-'));
+  const { runtime, openai } = makeRuntime({ defaultCwd });
+  let providerPlannerTurns = 0;
+  const originalStartTurn = openai.startTurn.bind(openai);
+  openai.startTurn = async (args: any) => {
+    openai.startTurnCalls.push(args);
+    const input = normalizeCommandSkillInput(args.inputText);
+    if (input.includes('docs/command-skills/assistant-record.md') && input.includes('"operation": "classify_new_record"')) {
+      return {
+        outputText: 'not json',
+      };
+    }
+    if (input.includes('你是 CodexBridge 助理记录分类器')) {
+      providerPlannerTurns += 1;
+      return {
+        outputText: JSON.stringify({
+          type: 'todo',
+          title: '联系王总确认发票',
+          content: '明天联系王总确认发票。',
+          priority: 'normal',
+          dueAt: '2026-05-10T23:59:00.000Z',
+          remindAt: null,
+          recurrence: null,
+          project: null,
+          tags: [],
+          confidence: 0.91,
+        }),
+      };
+    }
+    return originalStartTurn(args);
+  };
+
+  const pending = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-assistant-provider-fallback-1',
+    text: '/as 明天联系王总确认发票',
+  });
+
+  const text = pending.messages.map((message) => message.text ?? '').join('\n');
+  assert.equal(providerPlannerTurns, 1);
+  assert.match(text, /助理记录待确认/);
+  assert.match(text, /联系王总确认发票/);
+  const record = runtime.repositories.assistantRecords.list()[0];
+  assert.equal(record?.parsedJson?.normalizer, 'provider');
 });
 
 test('/todo edit rewrites the pending todo through the assistant record command skill', async () => {
@@ -7786,12 +7832,13 @@ test('/agent broad mission-control goals clarify before creating a draft', async
   }
 });
 
-test('/agent natural language falls back locally after one unparseable command skill result', async () => {
+test('/agent natural language falls back to the bound provider planner after one unparseable command skill result', async () => {
   const originalOpenAiKey = process.env.OPENAI_API_KEY;
   delete process.env.OPENAI_API_KEY;
   try {
     const { runtime, openai } = makeRuntime({ defaultCwd: '/repo' });
     let commandSkillTurns = 0;
+    let providerPlannerTurns = 0;
     const originalStartTurn = openai.startTurn.bind(openai);
     openai.startTurn = async (params: any) => {
       const parserInput = normalizeCommandSkillInput(params?.inputText);
@@ -7799,6 +7846,20 @@ test('/agent natural language falls back locally after one unparseable command s
         commandSkillTurns += 1;
         return {
           outputText: 'not json',
+        };
+      }
+      if (parserInput.includes('请把下面的微信 /agent 请求整理成严格 JSON')) {
+        providerPlannerTurns += 1;
+        return {
+          outputText: JSON.stringify({
+            title: '测试失败结论',
+            goal: '检查项目测试失败原因并给我结论',
+            expectedOutput: '测试失败原因结论和下一步建议',
+            plan: ['检查失败现象', '定位根因', '输出结论与下一步建议'],
+            category: 'code',
+            riskLevel: 'low',
+            mode: 'codex',
+          }),
         };
       }
       return originalStartTurn(params);
@@ -7812,8 +7873,121 @@ test('/agent natural language falls back locally after one unparseable command s
 
     const responseText = response.messages.map((message) => message.text).join('\n');
     assert.equal(commandSkillTurns, 1);
+    assert.equal(providerPlannerTurns, 1);
     assert.match(responseText, /Agent 草案/);
+    assert.match(responseText, /草案来源：当前 Provider/);
     assert.doesNotMatch(responseText, /无法理解 Agent 请求/);
+  } finally {
+    if (originalOpenAiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalOpenAiKey;
+    }
+  }
+});
+
+test('/agent natural language falls back to local rules even when OPENAI_API_KEY is present once provider planning is unavailable', async () => {
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  process.env.OPENAI_API_KEY = 'openai-test-key';
+  try {
+    const { runtime, openai } = makeRuntime({ defaultCwd: '/repo' });
+    const originalStartTurn = openai.startTurn.bind(openai);
+    openai.startTurn = async (params: any) => {
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
+      if (
+        parserInput.includes('docs/command-skills/agent.md')
+        || parserInput.includes('请把下面的微信 /agent 请求整理成严格 JSON')
+      ) {
+        return { outputText: 'not json' };
+      }
+      return originalStartTurn(params);
+    };
+
+    const response = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-local-fallback-1',
+      text: '/agent 检查 codex-native-api 的剩余工作并给我下一步建议',
+    });
+
+    const responseText = response.messages.map((message) => message.text).join('\n');
+    assert.match(responseText, /Agent 草案/);
+    assert.match(responseText, /草案来源：本地规则/);
+    assert.doesNotMatch(responseText, /草案来源：OpenAI Agents SDK/);
+  } finally {
+    if (originalOpenAiKey === undefined) {
+      delete process.env.OPENAI_API_KEY;
+    } else {
+      process.env.OPENAI_API_KEY = originalOpenAiKey;
+    }
+  }
+});
+
+test('/agent edit falls back to the bound provider draft editor after an unparseable command-skill edit result', async () => {
+  const originalOpenAiKey = process.env.OPENAI_API_KEY;
+  delete process.env.OPENAI_API_KEY;
+  try {
+    const { runtime, openai } = makeRuntime({ defaultCwd: '/repo' });
+    const originalStartTurn = openai.startTurn.bind(openai);
+    let providerEditorTurns = 0;
+    openai.startTurn = async (params: any) => {
+      const parserInput = normalizeCommandSkillInput(params?.inputText);
+      if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "natural"')) {
+        return {
+          outputText: JSON.stringify({
+            action: 'create_draft',
+            draft: {
+              title: '检查发版流程',
+              goal: '检查发版流程并输出处理建议',
+              expectedOutput: '发版流程检查结果',
+              plan: ['检查现状', '整理处理建议'],
+              category: 'ops',
+              riskLevel: 'medium',
+              mode: 'codex',
+            },
+            confidence: 0.9,
+            requiresConfirmation: true,
+          }),
+        };
+      }
+      if (parserInput.includes('docs/command-skills/agent.md') && parserInput.includes('"subcommand": "edit"')) {
+        return {
+          outputText: 'not json',
+        };
+      }
+      if (parserInput.includes('你是 CodexBridge 的 agent 草案编辑器')) {
+        providerEditorTurns += 1;
+        return {
+          outputText: JSON.stringify({
+            title: '发版流程方案',
+            goal: '检查发版流程并输出处理建议',
+            expectedOutput: '一份发版流程方案和执行建议，不直接改代码',
+            plan: ['核对现状与约束', '整理可执行方案', '总结风险和下一步'],
+            category: 'ops',
+            riskLevel: 'medium',
+            mode: 'hybrid',
+          }),
+        };
+      }
+      return originalStartTurn(params);
+    };
+
+    await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-edit-provider-fallback-1',
+      text: '/agent 检查发版流程并输出处理建议',
+    });
+
+    const edited = await runtime.services.bridgeCoordinator.handleInboundEvent({
+      platform: 'weixin',
+      externalScopeId: 'wx-agent-edit-provider-fallback-1',
+      text: '/agent edit 只做方案，不改代码',
+    });
+
+    const editedText = edited.messages.map((message) => message.text).join('\n');
+    assert.equal(providerEditorTurns, 1);
+    assert.match(editedText, /Agent 草案 \| 发版流程方案/);
+    assert.match(editedText, /草案来源：当前 Provider/);
+    assert.match(editedText, /交付物：一份发版流程方案和执行建议，不直接改代码/);
   } finally {
     if (originalOpenAiKey === undefined) {
       delete process.env.OPENAI_API_KEY;
@@ -9201,33 +9375,6 @@ test('/agent runAgentJob forwards provider approval requests to the supplied app
       process.env.OPENAI_API_KEY = originalOpenAiKey;
     }
   }
-});
-
-test('resolveOpenAIAgentRuntimeConfig supports OpenAI-compatible MiniMax settings', () => {
-  const config = resolveOpenAIAgentRuntimeConfig({
-    CODEXBRIDGE_AGENT_API_KEY: 'mini-key',
-    CODEXBRIDGE_AGENT_BASE_URL: 'https://api.minimaxi.com/v1',
-    CODEXBRIDGE_AGENT_MODEL: 'MiniMax-M2.7',
-  } as NodeJS.ProcessEnv);
-
-  assert.equal(config.apiKey, 'mini-key');
-  assert.equal(config.baseURL, 'https://api.minimaxi.com/v1');
-  assert.equal(config.model, 'MiniMax-M2.7');
-  assert.equal(config.useResponses, false);
-});
-
-test('resolveOpenAIAgentRuntimeConfig lets explicit API mode override defaults', () => {
-  const responsesConfig = resolveOpenAIAgentRuntimeConfig({
-    OPENAI_API_KEY: 'openai-key',
-    CODEXBRIDGE_AGENT_API: 'responses',
-  } as NodeJS.ProcessEnv);
-  const chatCompletionsConfig = resolveOpenAIAgentRuntimeConfig({
-    OPENAI_API_KEY: 'openai-key',
-    CODEXBRIDGE_AGENT_API: 'chat_completions',
-  } as NodeJS.ProcessEnv);
-
-  assert.equal(responsesConfig.useResponses, true);
-  assert.equal(chatCompletionsConfig.useResponses, false);
 });
 
 test('/skills lists visible skills for the current cwd and /skills show explains the selected skill', async () => {
@@ -11359,6 +11506,51 @@ test('/auto add natural language produces a draft through provider normalization
   assert.match(confirmText, /自动化任务已创建/);
   assert.match(confirmText, /标题：news 早报/);
   assert.equal(openai.startThreadCalls.length, 2);
+});
+
+test('/auto add falls back to the bound provider draft planner when the automation command skill returns unparseable output', async () => {
+  const { runtime, openai } = makeRuntime({
+    defaultCwd: '/tmp/codexbridge-auto-provider-fallback',
+  });
+  let providerPlannerTurns = 0;
+  const originalStartTurn = openai.startTurn.bind(openai);
+  openai.startTurn = async (params: any) => {
+    const parserInput = normalizeCommandSkillInput(params?.inputText);
+    if (parserInput.includes('docs/command-skills/auto.md')) {
+      return {
+        outputText: 'not json',
+      };
+    }
+    if (parserInput.includes('automation 草案规范化器')) {
+      providerPlannerTurns += 1;
+      return {
+        outputText: JSON.stringify({
+          valid: true,
+          title: 'news 早报',
+          mode: 'standalone',
+          schedules: [{ kind: 'daily', hour: 7, minute: 0 }],
+          task: '调用 news skill 给我发送到微信',
+        }),
+      };
+    }
+    return originalStartTurn(params);
+  };
+
+  const drafted = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-auto-provider-fallback-1',
+    text: '/auto add 每天早上7点调用 news skill 给我发送到微信',
+  });
+
+  const draftText = drafted.messages.map((entry: any) => entry.text ?? '').join('\n');
+  assert.equal(providerPlannerTurns, 1);
+  assert.match(draftText, /自动化草案 \| news 早报/);
+  assert.match(draftText, /计划：daily 07:00 UTC/);
+  const pending = runtime.services.bridgeCoordinator.getPendingAutomationDraft({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-auto-provider-fallback-1',
+  });
+  assert.equal(pending?.normalizedBy, 'provider');
 });
 
 test('/auto add natural language can create multiple daily schedules from one request', async () => {

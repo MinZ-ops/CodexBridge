@@ -261,7 +261,7 @@ type AutomationDraftCandidate = {
 type PendingAutomationDraft = {
   createdAt: number;
   rawInput: string;
-  normalizedBy: 'explicit' | 'codex' | 'agents-sdk';
+  normalizedBy: 'explicit' | 'codex' | 'provider';
   title: string;
   mode: AutomationMode;
   schedule: AutomationSchedule;
@@ -428,7 +428,7 @@ type AgentDraftCandidate = {
 type PendingAgentDraft = AgentDraftCandidate & {
   createdAt: number;
   rawInput: string;
-  normalizedBy: 'agents-sdk' | 'codex' | 'local';
+  normalizedBy: 'codex' | 'provider' | 'local';
   providerProfileId: string;
   locale: string | null;
   cwd: string | null;
@@ -453,6 +453,7 @@ type AgentCreateFlowOutcome =
   | {
     kind: 'draft';
     candidate: AgentDraftCandidate;
+    normalizedBy: 'codex' | 'provider' | 'local';
   }
   | {
     kind: 'clarify';
@@ -610,7 +611,7 @@ type PendingAssistantRecordUpdateDraft = {
   action: AssistantRecordUpdateAction;
   updatedRecord: AssistantRecord;
   matchedScore: number;
-  normalizedBy: 'codex' | 'agents-sdk' | 'local';
+  normalizedBy: 'codex' | 'provider' | 'local';
   changeSummary: string | null;
 };
 
@@ -630,7 +631,7 @@ type AssistantRecordRewriteCandidate = {
   confidence: number;
 };
 
-type AssistantRecordDraftNormalizeSource = 'codex' | 'agents-sdk' | 'local';
+type AssistantRecordDraftNormalizeSource = 'codex' | 'provider' | 'local';
 
 type AgentVerificationResult = {
   pass: boolean;
@@ -647,13 +648,6 @@ type AgentVerificationContext = {
   checklistSnapshot: ChecklistSnapshot | null;
   activeChecklistItem: ChecklistItem | null;
   isFinalChecklistItem: boolean;
-};
-
-type OpenAIAgentRuntimeConfig = {
-  apiKey: string | null;
-  baseURL: string | null;
-  model: string;
-  useResponses: boolean | undefined;
 };
 
 type SkillBrowserState = {
@@ -2225,16 +2219,16 @@ export class BridgeCoordinator {
         now: this.now(),
       });
     }
-    const agentsDraft = await normalizeAssistantRecordDraftWithOpenAIAgents(
+    const providerDraft = await this.normalizeAssistantRecordDraftWithProvider(
+      event,
+      scopeRef,
       rawInput,
       forcedType,
-      this.currentI18n.locale,
-      this.now(),
       localDraft,
       timezone,
     ).catch(() => null);
-    if (agentsDraft) {
-      return normalizeAssistantDraftForStorage(agentsDraft, {
+    if (providerDraft) {
+      return normalizeAssistantDraftForStorage(providerDraft, {
         timezone,
         now: this.now(),
       });
@@ -2287,6 +2281,34 @@ export class BridgeCoordinator {
         localDraft,
       }),
       parseResult: (outputText) => parseAssistantRecordDraftCandidate(outputText, rawInput, forcedType, localDraft, 'codex'),
+    });
+  }
+
+  async normalizeAssistantRecordDraftWithProvider(
+    event,
+    scopeRef: PlatformScopeRef,
+    rawInput: string,
+    forcedType: AssistantRecordType | null,
+    localDraft: AssistantRecordDraft,
+    timezone: string | null,
+  ): Promise<AssistantRecordDraft | null> {
+    const runtimeContext = this.resolveCodexIsolatedExecutionContext(event, scopeRef);
+    if (!runtimeContext) {
+      return null;
+    }
+    return this.invokeCommandSkillTurn({
+      event,
+      runtimeContext,
+      taskClass: 'intent_classification',
+      title: 'Assistant Record Planner',
+      metadata: {
+        source: 'assistant-record-planner',
+        command: assistantCommandNameForType(forcedType),
+        subcommand: 'natural',
+        operation: 'classify_new_record_fallback',
+      },
+      buildPrompt: () => buildAssistantRecordDraftPrompt(rawInput, forcedType, runtimeContext.locale, this.now(), timezone),
+      parseResult: (outputText) => parseAssistantRecordDraftCandidate(outputText, rawInput, forcedType, localDraft, 'provider'),
     });
   }
 
@@ -2486,13 +2508,14 @@ export class BridgeCoordinator {
     if (codexRoute) {
       return codexRoute;
     }
-    const agentsRoute = await resolveAssistantRecordRouteWithOpenAIAgents(
+    const providerRoute = await this.resolveAssistantRecordRouteWithProvider(
+      event,
+      scopeRef,
       rawInput,
       candidates,
-      this.currentI18n.locale,
-      this.now(),
+      forcedType,
     ).catch(() => null);
-    return agentsRoute;
+    return providerRoute;
   }
 
   async resolveAssistantRecordRouteWithCodex(
@@ -2534,6 +2557,33 @@ export class BridgeCoordinator {
     });
   }
 
+  async resolveAssistantRecordRouteWithProvider(
+    event,
+    scopeRef: PlatformScopeRef,
+    rawInput: string,
+    records: AssistantRecord[],
+    forcedType: AssistantRecordType | null,
+  ): Promise<AssistantRecordRouteDecision | null> {
+    const runtimeContext = this.resolveCodexIsolatedExecutionContext(event, scopeRef);
+    if (!runtimeContext) {
+      return null;
+    }
+    return this.invokeCommandSkillTurn({
+      event,
+      runtimeContext,
+      taskClass: 'intent_classification',
+      title: 'Assistant Record Router',
+      metadata: {
+        source: 'assistant-record-router',
+        command: assistantCommandNameForType(forcedType),
+        subcommand: 'natural',
+        operation: 'route_existing_record_fallback',
+      },
+      buildPrompt: () => buildAssistantRecordRoutePrompt(rawInput, records, runtimeContext.locale, this.now()),
+      parseResult: (outputText) => parseAssistantRecordRouteDecision(outputText, records),
+    });
+  }
+
   async previewAssistantRecordAction(
     event,
     scopeRef: PlatformScopeRef,
@@ -2541,7 +2591,7 @@ export class BridgeCoordinator {
     instructions: string[],
     action: AssistantRecordUpdateAction,
     forcedType: AssistantRecordType | null = null,
-  ): Promise<{ record: AssistantRecord; normalizedBy: 'codex' | 'agents-sdk' | 'local'; changeSummary: string | null }> {
+  ): Promise<{ record: AssistantRecord; normalizedBy: 'codex' | 'provider' | 'local'; changeSummary: string | null }> {
     const rawInput = instructions.join('\n');
     if (action === 'update') {
       const codexRecord = await this.previewAssistantRecordUpdateWithCodex(event, scopeRef, record, instructions, forcedType).catch(() => null);
@@ -2551,22 +2601,22 @@ export class BridgeCoordinator {
           record: preserveAssistantRecordStatusForContentUpdate(record, codexRecord.record, instructions),
         };
       }
-      const agentsRecord = await normalizeAssistantRecordUpdateWithOpenAIAgents(
+      const providerRecord = await this.previewAssistantRecordUpdateWithProvider(
+        event,
+        scopeRef,
         record,
         instructions,
-          this.currentI18n.locale,
-          this.now(),
-          record.timezone,
-        ).catch(() => null);
-      if (agentsRecord) {
+        forcedType,
+      ).catch(() => null);
+      if (providerRecord) {
         const nextRecord = forcedType
           ? {
-            ...agentsRecord.record,
+            ...providerRecord.record,
             type: forcedType,
           }
-          : agentsRecord.record;
+          : providerRecord.record;
         return {
-          ...agentsRecord,
+          ...providerRecord,
           record: preserveAssistantRecordStatusForContentUpdate(record, nextRecord, instructions),
         };
       }
@@ -2679,6 +2729,51 @@ export class BridgeCoordinator {
     return {
       record: rewritten,
       normalizedBy: 'codex',
+      changeSummary: candidate.changeSummary || null,
+    };
+  }
+
+  async previewAssistantRecordUpdateWithProvider(
+    event,
+    scopeRef: PlatformScopeRef,
+    record: AssistantRecord,
+    instructions: string[],
+    forcedType: AssistantRecordType | null = null,
+  ): Promise<{ record: AssistantRecord; normalizedBy: 'provider'; changeSummary: string | null } | null> {
+    const runtimeContext = this.resolveCodexIsolatedExecutionContext(event, scopeRef);
+    if (!runtimeContext) {
+      return null;
+    }
+    const candidate = await this.invokeCommandSkillTurn({
+      event,
+      runtimeContext,
+      taskClass: 'normalization',
+      title: 'Assistant Record Rewriter',
+      metadata: {
+        source: 'assistant-record-rewriter',
+        command: assistantCommandNameForType(forcedType),
+        subcommand: 'edit',
+        operation: 'rewrite_record_fallback',
+      },
+      buildPrompt: () => buildAssistantRecordRewritePrompt(
+        record,
+        instructions,
+        runtimeContext.locale,
+        this.now(),
+        extractEventTimezone(event) ?? record.timezone,
+      ),
+      parseResult: (outputText) => parseAssistantRecordRewriteCandidate(outputText, record, forcedType),
+    });
+    if (!candidate) {
+      return null;
+    }
+    const rewritten = applyAssistantRecordRewriteCandidate(record, candidate, instructions, 'provider', this.now());
+    if (!rewritten) {
+      return null;
+    }
+    return {
+      record: rewritten,
+      normalizedBy: 'provider',
       changeSummary: candidate.changeSummary || null,
     };
   }
@@ -6208,11 +6303,13 @@ export class BridgeCoordinator {
       }
       return this.handleAgentCommandSkillResult(event, scopeRef, body, commandResult, pendingDraft);
     }
-    const createFlow = this.buildAgentCreateFlowOutcome(event, scopeRef, body, 'local');
+    const createFlow = await this.normalizeAgentDraft(event, scopeRef, body, {
+      skipCodex: true,
+    });
     if (createFlow.kind === 'clarify') {
       return this.renderAgentClarifyResponse(event, createFlow.question, createFlow.candidates);
     }
-    const draft = this.buildPendingAgentDraft(event, scopeRef, createFlow.candidate, body, 'local');
+    const draft = this.buildPendingAgentDraft(event, scopeRef, createFlow.candidate, body, createFlow.normalizedBy);
     this.setPendingAgentDraft(scopeRef, draft);
     return this.renderAgentDraftResponse(event, draft);
   }
@@ -6221,7 +6318,7 @@ export class BridgeCoordinator {
     event,
     scopeRef: PlatformScopeRef,
     rawInput: string,
-    _normalizedBy: 'agents-sdk' | 'codex' | 'local',
+    normalizedBy: 'codex' | 'provider' | 'local',
     seedCandidate: AgentDraftCandidate | null = null,
   ): AgentCreateFlowOutcome {
     const boundSession = this.bridgeSessions.resolveScopeSession(scopeRef);
@@ -6240,6 +6337,7 @@ export class BridgeCoordinator {
       rawInput,
       cwd,
       locale,
+      normalizedBy,
       seedCandidate,
     });
   }
@@ -7058,24 +7156,69 @@ export class BridgeCoordinator {
     scopeRef: PlatformScopeRef,
     rawInput: string,
     options: { skipCodex?: boolean } = {},
-  ): Promise<PendingAgentDraft> {
+  ): Promise<AgentCreateFlowOutcome> {
     if (!options.skipCodex) {
       const codexDraft = await this.normalizeAgentDraftWithCodex(event, scopeRef, rawInput).catch(() => null);
       if (codexDraft) {
-        const draft = this.buildPendingAgentDraft(event, scopeRef, codexDraft, rawInput, 'codex');
-        if (draft) {
-          return draft;
-        }
+        return this.buildAgentCreateFlowOutcome(event, scopeRef, rawInput, 'codex', codexDraft);
       }
     }
-    const openAiDraft = await normalizeAgentDraftWithOpenAIAgents(rawInput, this.currentI18n.locale).catch(() => null);
-    if (openAiDraft) {
-      const draft = this.buildPendingAgentDraft(event, scopeRef, openAiDraft, rawInput, 'agents-sdk');
-      if (draft) {
-        return draft;
-      }
+    const providerDraft = await this.normalizeAgentDraftWithProvider(event, scopeRef, rawInput).catch(() => null);
+    if (providerDraft) {
+      return this.buildAgentCreateFlowOutcome(event, scopeRef, rawInput, 'provider', providerDraft);
     }
-    return this.buildPendingAgentDraft(event, scopeRef, buildLocalAgentDraftCandidate(rawInput), rawInput, 'local');
+    return this.buildAgentCreateFlowOutcome(event, scopeRef, rawInput, 'local');
+  }
+
+  async normalizeAgentDraftWithProvider(
+    event,
+    scopeRef: PlatformScopeRef,
+    rawInput: string,
+  ): Promise<AgentDraftCandidate | null> {
+    const runtimeContext = this.resolveCodexIsolatedExecutionContext(event, scopeRef);
+    if (!runtimeContext) {
+      return null;
+    }
+    return this.invokeCommandSkillTurn<AgentDraftCandidate>({
+      event,
+      runtimeContext,
+      taskClass: 'normalization',
+      title: 'Agent Draft Planner',
+      metadata: {
+        source: 'agent-draft-planner',
+        command: 'agent',
+        subcommand: 'natural',
+        operation: 'normalize_draft',
+      },
+      buildPrompt: () => buildAgentDraftPrompt(rawInput, runtimeContext.locale),
+      parseResult: parseAgentDraftCandidate,
+    });
+  }
+
+  async normalizeAgentDraftEditWithProvider(
+    event,
+    scopeRef: PlatformScopeRef,
+    draft: PendingAgentDraft,
+    instruction: string,
+  ): Promise<AgentDraftCandidate | null> {
+    const runtimeContext = this.resolveCodexIsolatedExecutionContext(event, scopeRef);
+    if (!runtimeContext) {
+      return null;
+    }
+    return this.invokeCommandSkillTurn<AgentDraftCandidate>({
+      event,
+      runtimeContext,
+      taskClass: 'normalization',
+      title: 'Agent Draft Editor',
+      metadata: {
+        source: 'agent-draft-editor',
+        command: 'agent',
+        subcommand: 'edit',
+        operation: 'merge_draft_edit',
+      },
+      buildPrompt: () => buildAgentDraftEditPrompt(draft, instruction, normalizeLocale(draft.locale) ?? 'zh-CN'),
+      parseResult: parseAgentDraftCandidate,
+    });
   }
 
   async normalizeAgentDraftEdit(
@@ -7084,9 +7227,11 @@ export class BridgeCoordinator {
     draft: PendingAgentDraft,
     instruction: string,
   ): Promise<PendingAgentDraft | null> {
-    const locale = draft.locale ?? this.resolveScopeLocale(scopeRef, event);
-    const agentsCandidate = await normalizeAgentDraftEditWithOpenAIAgents(draft, instruction, locale).catch(() => null);
-    return agentsCandidate ? this.buildEditedPendingAgentDraft(draft, instruction, agentsCandidate, 'agents-sdk') : null;
+    const providerCandidate = await this.normalizeAgentDraftEditWithProvider(event, scopeRef, draft, instruction).catch(() => null);
+    if (providerCandidate) {
+      return this.buildEditedPendingAgentDraft(draft, instruction, providerCandidate, 'provider');
+    }
+    return null;
   }
 
   buildPendingAgentDraft(
@@ -7094,7 +7239,7 @@ export class BridgeCoordinator {
     scopeRef: PlatformScopeRef,
     candidate: AgentDraftCandidate,
     rawInput: string,
-    normalizedBy: 'agents-sdk' | 'codex' | 'local',
+    normalizedBy: 'codex' | 'provider' | 'local',
   ): PendingAgentDraft {
     const boundSession = this.bridgeSessions.resolveScopeSession(scopeRef);
     const providerProfile = boundSession
@@ -7141,7 +7286,7 @@ export class BridgeCoordinator {
     draft: PendingAgentDraft,
     instruction: string,
     candidate: AgentDraftCandidate,
-    normalizedBy: 'agents-sdk' | 'codex',
+    normalizedBy: 'codex' | 'provider',
   ): PendingAgentDraft {
     const mergedRawInput = appendAgentDraftEditInput(draft.rawInput, instruction);
     const finalizedCandidate = finalizeAgentDraftCandidate({
@@ -10324,7 +10469,7 @@ export class BridgeCoordinator {
     scopeRef: PlatformScopeRef,
     candidate: AutomationDraftCandidate,
     rawInput: string,
-    normalizedBy: 'explicit' | 'codex' | 'agents-sdk',
+    normalizedBy: 'explicit' | 'codex' | 'provider',
   ): PendingAutomationDraft | null {
     const boundSession = this.bridgeSessions.resolveScopeSession(scopeRef);
     const providerProfile = boundSession
@@ -10416,8 +10561,8 @@ export class BridgeCoordinator {
     if (commandResult && commandResult.action === 'update_pending_draft') {
       return this.buildPendingAutomationDraft(event, scopeRef, commandResult.candidate, rawInput, 'codex');
     }
-    const agentsCandidate = await normalizeAutomationDraftWithOpenAIAgents(rawInput, this.resolveScopeLocale(scopeRef, event)).catch(() => null);
-    return agentsCandidate ? this.buildPendingAutomationDraft(event, scopeRef, agentsCandidate, rawInput, 'agents-sdk') : null;
+    const providerCandidate = await this.normalizeAutomationDraftWithProvider(event, scopeRef, rawInput).catch(() => null);
+    return providerCandidate ? this.buildPendingAutomationDraft(event, scopeRef, providerCandidate, rawInput, 'provider') : null;
   }
 
   async normalizeAutomationDraftEdit(
@@ -10426,7 +10571,6 @@ export class BridgeCoordinator {
     draft: PendingAutomationDraft,
     instruction: string,
   ): Promise<PendingAutomationDraft | null> {
-    const locale = draft.locale ?? this.resolveScopeLocale(scopeRef, event);
     const commandResult = await this.normalizeAutomationCommandWithCodex(event, scopeRef, {
       subcommand: 'edit',
       userInput: instruction,
@@ -10438,15 +10582,15 @@ export class BridgeCoordinator {
     )) {
       return this.buildEditedPendingAutomationDraft(draft, instruction, commandResult.candidate, 'codex');
     }
-    const agentsCandidate = await normalizeAutomationDraftEditWithOpenAIAgents(draft, instruction, locale).catch(() => null);
-    return agentsCandidate ? this.buildEditedPendingAutomationDraft(draft, instruction, agentsCandidate, 'agents-sdk') : null;
+    const providerCandidate = await this.normalizeAutomationDraftEditWithProvider(event, scopeRef, draft, instruction).catch(() => null);
+    return providerCandidate ? this.buildEditedPendingAutomationDraft(draft, instruction, providerCandidate, 'provider') : null;
   }
 
   buildEditedPendingAutomationDraft(
     draft: PendingAutomationDraft,
     instruction: string,
     candidate: AutomationDraftCandidate,
-    normalizedBy: 'codex' | 'agents-sdk',
+    normalizedBy: 'codex' | 'provider',
   ): PendingAutomationDraft | null {
     const schedules = getAutomationCandidateSchedules(candidate);
     if (schedules.length === 0) {
@@ -10464,6 +10608,57 @@ export class BridgeCoordinator {
       prompt: candidate.prompt,
       threadBridgeSessionId: candidate.mode === 'thread' ? draft.threadBridgeSessionId : null,
     };
+  }
+
+  async normalizeAutomationDraftWithProvider(
+    event,
+    scopeRef: PlatformScopeRef,
+    rawInput: string,
+  ): Promise<AutomationDraftCandidate | null> {
+    const runtimeContext = this.resolveCodexIsolatedExecutionContext(event, scopeRef);
+    if (!runtimeContext) {
+      return null;
+    }
+    return this.invokeCommandSkillTurn({
+      event,
+      runtimeContext,
+      taskClass: 'normalization',
+      title: 'Automation Draft Planner',
+      metadata: {
+        source: 'automation-draft-planner',
+        command: 'auto',
+        subcommand: 'add',
+        operation: 'normalize_draft_fallback',
+      },
+      buildPrompt: () => buildAutomationDraftPrompt(rawInput, normalizeLocale(runtimeContext.locale) ?? 'zh-CN'),
+      parseResult: parseAutomationDraftCandidate,
+    });
+  }
+
+  async normalizeAutomationDraftEditWithProvider(
+    event,
+    scopeRef: PlatformScopeRef,
+    draft: PendingAutomationDraft,
+    instruction: string,
+  ): Promise<AutomationDraftCandidate | null> {
+    const runtimeContext = this.resolveCodexIsolatedExecutionContext(event, scopeRef);
+    if (!runtimeContext) {
+      return null;
+    }
+    return this.invokeCommandSkillTurn({
+      event,
+      runtimeContext,
+      taskClass: 'normalization',
+      title: 'Automation Draft Editor',
+      metadata: {
+        source: 'automation-draft-editor',
+        command: 'auto',
+        subcommand: 'edit',
+        operation: 'merge_draft_edit_fallback',
+      },
+      buildPrompt: () => buildAutomationDraftEditPrompt(draft, instruction, normalizeLocale(draft.locale) ?? 'zh-CN'),
+      parseResult: parseAutomationDraftCandidate,
+    });
   }
 
   resolveAutomationJobForScope(event, token) {
@@ -11499,15 +11694,6 @@ export class BridgeCoordinator {
     const codexVerification = await this.verifyAgentResultWithCodex(job, result, session, context).catch(() => null);
     if (codexVerification) {
       return codexVerification;
-    }
-    const semantic = await verifyAgentResultWithOpenAIAgents(
-      job,
-      result,
-      this.currentI18n.locale,
-      context,
-    ).catch(() => null);
-    if (semantic) {
-      return semantic;
     }
     return {
       pass: true,
@@ -12725,260 +12911,6 @@ function buildReviewResultLocalizationPrompt(
   ].join('\n');
 }
 
-async function normalizeAgentDraftWithOpenAIAgents(rawInput: string, locale: string | null): Promise<AgentDraftCandidate | null> {
-  if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
-    return null;
-  }
-  const output = await runOpenAIAgentJson({
-    name: 'CodexBridge Intent Planner',
-    instructions: buildOpenAIAgentPlannerInstructions(locale),
-    input: rawInput,
-  });
-  return parseAgentDraftCandidate(output);
-}
-
-async function normalizeAgentDraftEditWithOpenAIAgents(
-  draft: PendingAgentDraft,
-  instruction: string,
-  locale: string | null,
-): Promise<AgentDraftCandidate | null> {
-  if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
-    return null;
-  }
-  const normalizedLocale = normalizeLocale(locale) ?? 'zh-CN';
-  const output = await runOpenAIAgentJson({
-    name: 'CodexBridge Agent Draft Editor',
-    instructions: 'Merge agent draft edit instructions into the existing draft as strict JSON only. Do not use markdown.',
-    input: buildAgentDraftEditPrompt(draft, instruction, normalizedLocale),
-  });
-  return parseAgentDraftCandidate(output);
-}
-
-async function verifyAgentResultWithOpenAIAgents(
-  job: AgentJob,
-  result,
-  locale: string | null,
-  context: AgentVerificationContext,
-): Promise<AgentVerificationResult | null> {
-  if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
-    return null;
-  }
-  const output = await runOpenAIAgentJson({
-    name: 'CodexBridge Agent Verifier',
-    instructions: buildOpenAIAgentVerifierInstructions(locale),
-    input: JSON.stringify({
-      goal: job.goal,
-      expectedOutput: job.expectedOutput,
-      plan: job.plan,
-      acceptanceCriteria: job.acceptanceCriteria,
-      activeChecklistItem: context.activeChecklistItem
-        ? {
-          kind: context.activeChecklistItem.kind,
-          title: context.activeChecklistItem.title,
-          detail: context.activeChecklistItem.detail,
-        }
-        : null,
-      isFinalChecklistItem: context.isFinalChecklistItem,
-      outputState: result?.outputState ?? null,
-      outputText: truncateText(String(result?.outputText ?? result?.previewText ?? ''), 6000),
-      artifactCount: Array.isArray(result?.outputArtifacts) ? result.outputArtifacts.length : 0,
-      mediaCount: Array.isArray(result?.outputMedia) ? result.outputMedia.length : 0,
-    }),
-  });
-  return parseAgentVerificationResult(output);
-}
-
-async function normalizeAssistantRecordDraftWithOpenAIAgents(
-  rawInput: string,
-  forcedType: AssistantRecordType | null,
-  locale: string | null,
-  now: number,
-  fallbackDraft: AssistantRecordDraft,
-  timezone: string | null,
-): Promise<AssistantRecordDraft | null> {
-  if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
-    return null;
-  }
-  const output = await runOpenAIAgentJson({
-    name: 'CodexBridge Assistant Record Classifier',
-    instructions: 'Classify assistant records as strict JSON only. Do not use markdown.',
-    input: buildAssistantRecordDraftPrompt(rawInput, forcedType, locale, now, timezone),
-  });
-  return parseAssistantRecordDraftCandidate(output, rawInput, forcedType, fallbackDraft, 'agents-sdk');
-}
-
-async function normalizeAutomationDraftWithOpenAIAgents(
-  rawInput: string,
-  locale: string | null,
-): Promise<AutomationDraftCandidate | null> {
-  if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
-    return null;
-  }
-  const normalizedLocale = normalizeLocale(locale) ?? 'zh-CN';
-  const output = await runOpenAIAgentJson({
-    name: 'CodexBridge Automation Draft Normalizer',
-    instructions: 'Normalize automation requests as strict JSON only. Do not use markdown.',
-    input: buildAutomationDraftPrompt(rawInput, normalizedLocale),
-  });
-  return parseAutomationDraftCandidate(output ?? '');
-}
-
-async function normalizeAutomationDraftEditWithOpenAIAgents(
-  draft: PendingAutomationDraft,
-  instruction: string,
-  locale: string | null,
-): Promise<AutomationDraftCandidate | null> {
-  if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
-    return null;
-  }
-  const normalizedLocale = normalizeLocale(locale) ?? 'zh-CN';
-  const output = await runOpenAIAgentJson({
-    name: 'CodexBridge Automation Draft Editor',
-    instructions: 'Merge automation draft edit instructions into the existing draft as strict JSON only. Do not use markdown.',
-    input: buildAutomationDraftEditPrompt(draft, instruction, normalizedLocale),
-  });
-  return parseAutomationDraftCandidate(output ?? '');
-}
-
-async function normalizeAssistantRecordUpdateWithOpenAIAgents(
-  record: AssistantRecord,
-  instructions: string[],
-  locale: string | null,
-  now: number,
-  timezone: string | null,
-): Promise<{ record: AssistantRecord; normalizedBy: 'agents-sdk'; changeSummary: string | null } | null> {
-  if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
-    return null;
-  }
-  const output = await runOpenAIAgentJson({
-    name: 'CodexBridge Assistant Record Rewriter',
-    instructions: 'Rewrite assistant records as strict JSON only. Do not use markdown.',
-    input: buildAssistantRecordRewritePrompt(record, instructions, locale, now, timezone ?? record.timezone),
-  });
-  const candidate = parseAssistantRecordRewriteCandidate(output, record);
-  if (!candidate) {
-    return null;
-  }
-  const rewritten = applyAssistantRecordRewriteCandidate(record, candidate, instructions, 'agents-sdk', now);
-  if (!rewritten) {
-    return null;
-  }
-  return {
-    record: rewritten,
-    normalizedBy: 'agents-sdk',
-    changeSummary: candidate.changeSummary || null,
-  };
-}
-
-async function resolveAssistantRecordRouteWithOpenAIAgents(
-  rawInput: string,
-  records: AssistantRecord[],
-  locale: string | null,
-  now: number,
-): Promise<AssistantRecordRouteDecision | null> {
-  if (!resolveOpenAIAgentRuntimeConfig().apiKey) {
-    return null;
-  }
-  const output = await runOpenAIAgentJson({
-    name: 'CodexBridge Assistant Record Router',
-    instructions: 'Route assistant record requests as strict JSON only. Do not use markdown.',
-    input: buildAssistantRecordRoutePrompt(rawInput, records, locale, now),
-  });
-  return parseAssistantRecordRouteDecision(output, records);
-}
-
-async function runOpenAIAgentJson({ name, instructions, input }: {
-  name: string;
-  instructions: string;
-  input: string;
-}): Promise<string | null> {
-  const runtimeConfig = resolveOpenAIAgentRuntimeConfig();
-  if (!runtimeConfig.apiKey) {
-    return null;
-  }
-  const { Agent, OpenAIProvider, Runner } = await import('@openai/agents');
-  const modelProvider = new OpenAIProvider({
-    apiKey: runtimeConfig.apiKey,
-    baseURL: runtimeConfig.baseURL ?? undefined,
-    useResponses: runtimeConfig.useResponses,
-  });
-  const runner = new Runner({
-    modelProvider,
-    tracingDisabled: true,
-  });
-  const agent = new Agent({
-    name,
-    instructions,
-    model: runtimeConfig.model,
-  });
-  const result = await runner.run(agent, input, { maxTurns: 2 });
-  return typeof result.finalOutput === 'string'
-    ? result.finalOutput
-    : JSON.stringify(result.finalOutput ?? null);
-}
-
-export function resolveOpenAIAgentRuntimeConfig(env: NodeJS.ProcessEnv = process.env): OpenAIAgentRuntimeConfig {
-  const apiKey = firstNonEmptyString(
-    env.CODEXBRIDGE_AGENT_API_KEY,
-    env.OPENAI_API_KEY,
-    env.MINIMAX_API_KEY,
-  );
-  const baseURL = firstNonEmptyString(
-    env.CODEXBRIDGE_AGENT_BASE_URL,
-    env.OPENAI_BASE_URL,
-    env.OPENAI_API_BASE_URL,
-  );
-  const apiMode = compactWhitespace(env.CODEXBRIDGE_AGENT_API ?? '').toLowerCase();
-  const useResponses = apiMode === 'responses'
-    ? true
-    : apiMode === 'chat_completions' || baseURL
-      ? false
-      : undefined;
-  return {
-    apiKey,
-    baseURL,
-    model: firstNonEmptyString(env.CODEXBRIDGE_AGENT_MODEL, env.OPENAI_MODEL) ?? 'gpt-5.5',
-    useResponses,
-  };
-}
-
-function firstNonEmptyString(...values: unknown[]): string | null {
-  for (const value of values) {
-    const normalized = compactWhitespace(value);
-    if (normalized) {
-      return normalized;
-    }
-  }
-  return null;
-}
-
-function buildOpenAIAgentPlannerInstructions(locale: string | null): string {
-  const language = normalizeLocale(locale) === 'zh-CN' ? 'Chinese' : 'English';
-  return [
-    `You are the intent and planning agent for CodexBridge. Respond in ${language}.`,
-    'Normalize the user request into strict JSON only, without markdown.',
-    'Schema:',
-    '{"title":"short title","goal":"clear goal","expectedOutput":"final deliverable","acceptanceCriteria":["criterion 1","criterion 2"],"immutablePrompt":"fixed prompt for every cycle","loopPolicy":{"maxAttempts":2,"maxTurns":8,"maxCycles":null,"maxNoProgressCycles":3},"plan":["formal checklist item 1","formal checklist item 2"],"category":"code|research|ops|doc|media|mixed","riskLevel":"low|medium|high","mode":"codex|agents|hybrid"}',
-    'Prefer mode=hybrid for multi-step tasks, mode=codex for code/repo tasks, and mode=agents for pure research/planning.',
-    'Keep plan to 3-6 formal checklist items. Do not return generic software lifecycle filler like analyze/design/code/test/deploy unless the task truly requires those exact checklist items.',
-    'Return a concrete immutablePrompt that can be reused for each cycle of the mission.',
-  ].join('\n');
-}
-
-function buildOpenAIAgentVerifierInstructions(locale: string | null): string {
-  const language = normalizeLocale(locale) === 'zh-CN' ? 'Chinese' : 'English';
-  return [
-    `You are the verifier for a CodexBridge background agent job. Respond in ${language}.`,
-    'Judge whether the current formal checklist item is complete, and only treat the whole mission as complete when the final checklist item also satisfies the goal and acceptance criteria.',
-    'Return strict JSON only, without markdown.',
-    'Schema:',
-    '{"pass":true,"summary":"short verdict","issues":[],"nextAction":"complete|retry|fail","progressSummary":"authoritative cycle summary","nextStep":"smallest next step or null","latestBlocker":"blocking reason or null","planChangeSuggestion":null}',
-    'When a formal checklist change is needed, set planChangeSuggestion={"rationale":"why the confirmed formal checklist must change","proposedPlan":["..."],"proposedAcceptanceCriteria":["..."],"proposedExpectedOutput":"optional updated deliverable"}',
-    'Use nextAction=retry when one more automated fix attempt is likely useful. Use fail when the task needs user input or cannot be judged.',
-    'Use planChangeSuggestion only when the formal checklist / expected output / acceptance criteria need a change-gated split, append, reorder, merge, drop, or rename. Internal substeps belong in workpad notes, not planChangeSuggestion.',
-  ].join('\n');
-}
-
 function buildAgentDraftPrompt(rawInput: string, locale: string | null): string {
   const language = normalizeLocale(locale) === 'zh-CN' ? '中文' : 'English';
   return [
@@ -13596,7 +13528,7 @@ function applyAssistantRecordRewriteCandidate(
   record: AssistantRecord,
   candidate: AssistantRecordRewriteCandidate,
   instructions: string[],
-  source: 'codex' | 'agents-sdk',
+  source: 'codex' | 'provider',
   now: number,
 ): AssistantRecord | null {
   if (!candidate.content.trim()) {
@@ -13838,11 +13770,13 @@ function buildAgentCreateFlowCandidate({
   rawInput,
   cwd,
   locale,
+  normalizedBy,
   seedCandidate = null,
 }: {
   rawInput: string;
   cwd: string | null;
   locale: SupportedLocale;
+  normalizedBy: 'codex' | 'provider' | 'local';
   seedCandidate?: AgentDraftCandidate | null;
 }): AgentCreateFlowOutcome {
   const goal = compactWhitespace(seedCandidate?.goal ?? rawInput);
@@ -13854,6 +13788,7 @@ function buildAgentCreateFlowCandidate({
   }
   return {
     kind: 'draft',
+    normalizedBy,
     candidate: finalizeAgentDraftCandidate({
       rawInput,
       cwd,
@@ -15392,8 +15327,8 @@ function extractAgentRenameTitle(text: string): string {
 }
 
 function formatAgentNormalizer(value: string, i18n: Translator): string {
-  if (value === 'agents-sdk') {
-    return i18n.t('coordinator.agent.normalizer.agents');
+  if (value === 'provider') {
+    return i18n.t('coordinator.agent.normalizer.provider');
   }
   if (value === 'codex') {
     return i18n.t('coordinator.agent.normalizer.codex');

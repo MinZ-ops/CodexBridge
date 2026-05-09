@@ -257,16 +257,7 @@ Examples:
 /agent del 1
 ```
 
-Implementation note: the workflow is Codex-first hybrid. Codex app-server is preferred for planning, execution, and semantic verification, so a host Codex subscription is used by default. OpenAI Agents SDK is only a fallback when `CODEXBRIDGE_AGENT_API_KEY` or `OPENAI_API_KEY` is configured and the Codex normalization/verifier path is unavailable. Long text results are kept separately from the preview, so `/agent result <index>` can page through the full answer and `/agent result <index> file` can export it as phone-friendly TXT. Jobs with generated attachments keep artifact records, so `/agent send <index>` can resend the file if WeChat rate-limits the first delivery. If both Codex and Agents SDK normalization are unavailable, local fallback keeps the command usable.
-
-MiniMax/OpenAI-compatible example:
-
-```bash
-CODEXBRIDGE_AGENT_API_KEY=...
-CODEXBRIDGE_AGENT_BASE_URL=https://api.minimaxi.com/v1
-CODEXBRIDGE_AGENT_MODEL=MiniMax-M2.7
-CODEXBRIDGE_AGENT_API=chat_completions
-```
+Implementation note: planning, draft editing, and verification now default to the Provider currently bound to the WeChat chat. Responses is preferred first; compatible routes, native Codex paths, and local rules only appear when the bound Provider path is unavailable. Background execution continues on the detached task session created from that same Provider profile. Long text results are kept separately from the preview, so `/agent result <index>` can page through the full answer and `/agent result <index> file` can export it as phone-friendly TXT. Jobs with generated attachments keep artifact records, so `/agent send <index>` can resend the file if WeChat rate-limits the first delivery.
 
 ### `/as`, `/log`, `/todo`, `/remind`, and `/note`
 

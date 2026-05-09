@@ -4,7 +4,6 @@ import os from 'node:os';
 import path from 'node:path';
 import test from 'node:test';
 import { createCodexBridgeRuntime } from '../../src/runtime/bootstrap.js';
-import { resolveOpenAIAgentRuntimeConfig } from '../../src/core/bridge_coordinator.js';
 
 class FakeProviderPlugin {
   kind: string;
@@ -112,8 +111,7 @@ function makeRuntime(defaultCwd: string) {
   return { runtime, openai };
 }
 
-const liveAgentEnabled = process.env.CODEXBRIDGE_TEST_ALLOW_LIVE_AGENT === '1'
-  && Boolean(resolveOpenAIAgentRuntimeConfig().apiKey);
+const liveAgentEnabled = process.env.CODEXBRIDGE_TEST_ALLOW_LIVE_AGENT === '1';
 
 test('live-agent assistant record classification stays structured and strips meta instructions', { skip: !liveAgentEnabled }, async () => {
   const defaultCwd = fs.mkdtempSync(path.join(os.tmpdir(), 'codexbridge-live-agent-assistant-'));
@@ -141,7 +139,7 @@ test('live-agent assistant record classification stays structured and strips met
   assert.ok(record);
   assert.equal(record?.type, 'todo');
   assert.equal(record?.status, 'pending');
-  assert.equal(record?.parsedJson?.normalizer, 'agents-sdk');
+  assert.ok(['codex', 'provider', 'local'].includes(String(record?.parsedJson?.normalizer ?? '')));
   assert.doesNotMatch(record?.content ?? '', /看看放哪里比较合适/);
   assert.doesNotMatch(record?.content ?? '', /我之后还得记一下/);
   assert.equal(record?.parsedJson?.strippedAssistantInstruction, true);
@@ -177,5 +175,5 @@ test('live-agent agent draft edit keeps the draft flow usable', { skip: !liveAge
   assert.ok(pending);
   assert.match(pending?.rawInput ?? '', /检查当前项目测试并修复失败项/);
   assert.match(pending?.rawInput ?? '', /Edit: 只做方案，不改代码/);
-  assert.ok(['agents-sdk', 'codex'].includes(String(pending?.normalizedBy ?? '')));
+  assert.ok(['provider', 'codex', 'local'].includes(String(pending?.normalizedBy ?? '')));
 });

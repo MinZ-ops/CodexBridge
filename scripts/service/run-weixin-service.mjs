@@ -22,6 +22,8 @@ const once = Boolean(args.once);
 let child = null;
 let stopping = false;
 
+await loadEnvFile(path.join(rootDir, '.env'));
+await loadEnvFile(path.join(rootDir, '.env.local'));
 await loadEnvFile(envFile);
 if (homeDir) {
   process.env.HOME = homeDir;

@@ -14,10 +14,6 @@ const allowLiveOpenAICompatible = isolatedEnv[LIVE_OPENAI_COMPATIBLE_TEST_ENV_FL
 
 if (!allowLiveAgent && !allowLiveOpenAICompatible) {
   for (const key of [
-    'CODEXBRIDGE_AGENT_API_KEY',
-    'CODEXBRIDGE_AGENT_BASE_URL',
-    'CODEXBRIDGE_AGENT_API',
-    'CODEXBRIDGE_AGENT_MODEL',
     'OPENAI_API_KEY',
     'OPENAI_BASE_URL',
     'OPENAI_API_BASE_URL',
