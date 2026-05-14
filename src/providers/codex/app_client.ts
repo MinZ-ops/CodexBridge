@@ -1561,8 +1561,24 @@ export class CodexAppClient extends EventEmitter {
         sawTerminalNotification = true;
       }
       if (isErrorNotificationForThreadTurn(notification, threadId, turnId)) {
-        terminalRuntimeError = extractNotificationErrorMessage(notification)
-          ?? 'Codex app-server reported an error for this turn';
+        const notificationErrorMessage = extractNotificationErrorMessage(notification);
+        if (!notificationErrorMessage) {
+          this.logDebug('turn_wait_unclassified_error_notification', {
+            threadId,
+            turnId,
+            method: notification?.method ?? null,
+          });
+          return;
+        }
+        if (isTransientNotificationErrorMessage(notificationErrorMessage)) {
+          this.logDebug('turn_wait_transient_error_notification', {
+            threadId,
+            turnId,
+            errorMessage: notificationErrorMessage,
+          });
+          return;
+        }
+        terminalRuntimeError = notificationErrorMessage;
         sawTerminalNotification = true;
         return;
       }
@@ -2648,12 +2664,19 @@ function summarizeRpcResult(method: string, result: any) {
 }
 
 function summarizeNotificationMessage(message: any) {
+  const errorMessage = isErrorNotificationMethod(message?.method)
+    ? extractNotificationErrorMessage(message)
+    : null;
   return {
     method: String(message?.method ?? ''),
     id: 'id' in (message ?? {}) ? String(message.id ?? '') : null,
     threadId: extractThreadIdFromNotification(message),
     turnId: extractNotificationTurnId(message?.params ?? null),
     itemId: extractItemId(message?.params ?? null),
+    eventType: typeof message?.params?.event?.type === 'string'
+      ? message.params.event.type
+      : null,
+    errorMessage: truncateDebugText(errorMessage, 160),
     outputKind: typeof message?.params?.item?.output_kind === 'string'
       ? message.params.item.output_kind
       : null,
@@ -3333,8 +3356,37 @@ function extractNotificationErrorMessage(notification: any): string | null {
     ?? extractTextCandidate(params?.message)
     ?? extractTextCandidate(params?.details)
     ?? extractTextCandidate(params?.event?.error)
+    ?? extractTextCandidate(params?.event?.message)
+    ?? extractTextCandidate(params?.event?.details)
+    ?? extractTextCandidate(params?.event?.msg)
+    ?? extractTextCandidate(params?.msg?.error)
+    ?? extractTextCandidate(params?.msg?.message)
+    ?? extractTextCandidate(params?.msg?.details)
+    ?? extractTextCandidate(params?.msg)
     ?? extractTextCandidate(notification?.error);
   return typeof message === 'string' && message.trim() ? message.trim() : null;
+}
+
+function isTransientNotificationErrorMessage(message: string | null): boolean {
+  if (!message) {
+    return false;
+  }
+  const normalized = message.trim().replace(/\s+/g, ' ').toLowerCase();
+  if (!normalized) {
+    return false;
+  }
+  const hasAttemptCounter = /\b\d+\s*\/\s*\d+\b/.test(normalized);
+  const looksLikeRetry =
+    /\breconnecting\b/.test(normalized)
+    || /\bretrying\b/.test(normalized)
+    || /\bretry\b/.test(normalized);
+  const looksTerminal =
+    /\b(exhausted|failed|failure|fatal|giving up|unavailable|forbidden|unauthorized)\b/.test(normalized)
+    || /\bhttp\s+\d{3}\b/.test(normalized);
+  if (hasAttemptCounter && looksLikeRetry && !looksTerminal) {
+    return true;
+  }
+  return /\b(stream|connection|socket)\b.*\b(disconnected|closed|reset)\b.*\bretrying\b/.test(normalized);
 }
 
 function computeTerminalSettleMs(timeoutMs) {

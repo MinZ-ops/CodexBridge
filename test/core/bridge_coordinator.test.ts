@@ -1502,6 +1502,60 @@ test('bridge coordinator auto-rebinds to a new session when stale thread resume 
   );
 });
 
+test('bridge coordinator auto-rebinds when Codex returns a stale-thread provider_error result', async () => {
+  const { runtime, openai } = makeRuntime();
+  const original = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-provider-error-stale-thread',
+    text: 'hello codexbridge',
+  });
+
+  const staleThreadId = original.session.codexThreadId;
+  const originalStartTurn = openai.startTurn.bind(openai);
+  openai.startTurn = async (args) => {
+    if (args.bridgeSession.codexThreadId === staleThreadId) {
+      openai.startTurnCalls.push({
+        providerProfile: args.providerProfile,
+        bridgeSession: args.bridgeSession,
+        sessionSettings: args.sessionSettings,
+        event: args.event,
+        inputText: args.inputText,
+      });
+      return {
+        outputText: '',
+        outputArtifacts: [],
+        outputMedia: [],
+        outputState: 'provider_error',
+        previewText: '',
+        finalSource: 'notification_error',
+        status: null,
+        errorMessage: `thread not found: ${staleThreadId}`,
+        turnId: `${staleThreadId}-turn-stale`,
+        threadId: staleThreadId,
+        title: original.session.title,
+      };
+    }
+    return originalStartTurn(args);
+  };
+
+  const result = await runtime.services.bridgeCoordinator.handleInboundEvent({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-provider-error-stale-thread',
+    text: 'hello after provider error',
+  });
+
+  assert.match(result.messages[0]?.text ?? '', /openai: hello after provider error/);
+  assert.equal(openai.startThreadCalls.length, 2);
+  assert.ok(openai.resumeThreadCalls.length >= 1);
+
+  const rebound = runtime.services.bridgeSessions.resolveScopeSession({
+    platform: 'weixin',
+    externalScopeId: 'wx-user-provider-error-stale-thread',
+  });
+  assert.notEqual(rebound?.id, original.session?.bridgeSessionId);
+  assert.notEqual(rebound?.codexThreadId, original.session?.codexThreadId);
+});
+
 test('bridge coordinator recreates a scope session when Codex reports a damaged rollout file', async () => {
   const { runtime, openai } = makeRuntime();
   const original = await runtime.services.bridgeCoordinator.handleInboundEvent({

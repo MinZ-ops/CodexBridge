@@ -3314,6 +3314,237 @@ test('CodexAppClient returns provider_error immediately when an error notificati
   assert.equal(result.errorMessage, 'HTTP 503 Service Unavailable');
 });
 
+test('CodexAppClient extracts terminal error messages from codex event notifications', async () => {
+  const client = new CodexAppClient({
+    codexCliBin: 'codex',
+  });
+  client.transportKind = 'stdio';
+
+  client.request = async (method) => {
+    if (method === 'turn/start') {
+      setTimeout(() => {
+        client.emit('notification', {
+          method: 'codex/event/error',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            event: {
+              type: 'error',
+              message: 'HTTP 503 Service Unavailable',
+            },
+          },
+        });
+      }, 0);
+      return { turn: { id: 'turn-1' } };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  };
+
+  const result = await client.startTurn({
+    threadId: 'thread-1',
+    inputText: 'hello',
+    model: 'gpt-5.4',
+    effort: null,
+    collaborationMode: 'default',
+    timeoutMs: 2500,
+  });
+
+  assert.equal(result.outputText, '');
+  assert.equal(result.outputState, 'provider_error');
+  assert.equal(result.finalSource, 'notification_error');
+  assert.equal(result.errorMessage, 'HTTP 503 Service Unavailable');
+});
+
+test('CodexAppClient ignores transient reconnect notifications and still returns the final answer for the active stdio turn', async () => {
+  let nowMs = 0;
+  let sleepCount = 0;
+  let transientEmitted = false;
+  let finalEmitted = false;
+  const client = new CodexAppClient({
+    codexCliBin: 'codex',
+    turnPollNow: () => nowMs,
+    turnPollSleep: async (ms) => {
+      nowMs += ms;
+      sleepCount += 1;
+      if (!transientEmitted) {
+        transientEmitted = true;
+        client.emit('notification', {
+          method: 'codex/event/error',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            event: {
+              type: 'error',
+              message: 'Reconnecting... 1/5',
+            },
+          },
+        });
+      } else if (!finalEmitted && sleepCount >= 2) {
+        finalEmitted = true;
+        client.emit('notification', {
+          method: 'item/started',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            item: {
+              id: 'item-1',
+              type: 'agentMessage',
+              phase: 'final_answer',
+            },
+          },
+        });
+        client.emit('notification', {
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'item-1',
+            delta: '恢复后的最终回答',
+          },
+        });
+        client.emit('notification', {
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            item: {
+              id: 'item-1',
+            },
+          },
+        });
+        client.emit('notification', {
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+          },
+        });
+      }
+    },
+  });
+  client.transportKind = 'stdio';
+
+  client.request = async (method) => {
+    if (method === 'turn/start') {
+      return { turn: { id: 'turn-1' } };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  };
+
+  const result = await client.startTurn({
+    threadId: 'thread-1',
+    inputText: 'hello',
+    model: 'gpt-5.4',
+    effort: null,
+    collaborationMode: 'default',
+    timeoutMs: 2500,
+  });
+
+  assert.equal(result.outputText, '恢复后的最终回答');
+  assert.equal(result.outputState, 'complete');
+  assert.equal(result.finalSource, 'progress_only');
+  assert.equal(result.errorMessage, undefined);
+});
+
+test('CodexAppClient ignores message-less stream errors and waits for retry output', async () => {
+  let nowMs = 0;
+  let sleepCount = 0;
+  let streamErrorEmitted = false;
+  let transientEmitted = false;
+  let finalEmitted = false;
+  const client = new CodexAppClient({
+    codexCliBin: 'codex',
+    turnPollNow: () => nowMs,
+    turnPollSleep: async (ms) => {
+      nowMs += ms;
+      sleepCount += 1;
+      if (!streamErrorEmitted) {
+        streamErrorEmitted = true;
+        client.emit('notification', {
+          method: 'codex/event/stream_error',
+          params: {
+            conversationId: 'thread-1',
+            id: '1',
+            msg: {
+              type: 'stream_error',
+            },
+          },
+        });
+      } else if (!transientEmitted) {
+        transientEmitted = true;
+        client.emit('notification', {
+          method: 'error',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            message: 'Reconnecting... 1/5',
+          },
+        });
+      } else if (!finalEmitted && sleepCount >= 3) {
+        finalEmitted = true;
+        client.emit('notification', {
+          method: 'item/started',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            item: {
+              id: 'item-1',
+              type: 'agentMessage',
+              phase: 'final_answer',
+            },
+          },
+        });
+        client.emit('notification', {
+          method: 'item/agentMessage/delta',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            itemId: 'item-1',
+            delta: 'OK',
+          },
+        });
+        client.emit('notification', {
+          method: 'item/completed',
+          params: {
+            threadId: 'thread-1',
+            turnId: 'turn-1',
+            item: {
+              id: 'item-1',
+            },
+          },
+        });
+        client.emit('notification', {
+          method: 'turn/completed',
+          params: {
+            threadId: 'thread-1',
+          },
+        });
+      }
+    },
+  });
+  client.transportKind = 'stdio';
+
+  client.request = async (method) => {
+    if (method === 'turn/start') {
+      return { turn: { id: 'turn-1' } };
+    }
+    throw new Error(`Unexpected method: ${method}`);
+  };
+
+  const result = await client.startTurn({
+    threadId: 'thread-1',
+    inputText: 'hello',
+    model: 'gpt-5.4',
+    effort: null,
+    collaborationMode: 'default',
+    timeoutMs: 2500,
+  });
+
+  assert.equal(result.outputText, 'OK');
+  assert.equal(result.outputState, 'complete');
+  assert.equal(result.finalSource, 'progress_only');
+  assert.equal(result.errorMessage, undefined);
+});
+
 test('CodexAppClient returns partial commentary instead of timing out when assistant activity exists without a final answer', async () => {
   const client = new CodexAppClient({
     codexCliBin: 'codex',

@@ -63,3 +63,76 @@ test('OpenAINativeProviderPlugin delegates thread creation through CodexProvider
     ['startThread', 'openai-default', '/tmp/openai'],
   ]);
 });
+
+test('OpenAINativeProviderPlugin leaves the model unset unless the bridge session explicitly selects one', async () => {
+  const calls: any[] = [];
+  const plugin = new OpenAINativeProviderPlugin({
+    clientFactory: () => ({
+      async start() {
+        calls.push(['start']);
+      },
+      async startThread(params: any) {
+        calls.push(['startThread', params.model ?? null]);
+        return {
+          threadId: 'thread-openai-2',
+          cwd: params.cwd ?? null,
+          title: params.title ?? null,
+        };
+      },
+      async startTurn(params: any) {
+        calls.push(['startTurn', params.model ?? null]);
+        return {
+          outputText: 'done',
+          threadId: params.threadId,
+          title: null,
+        };
+      },
+      async listModels() {
+        calls.push(['listModels']);
+        return [{
+          id: 'gpt-5.1-codex-max',
+          model: 'gpt-5.1-codex-max',
+          displayName: 'GPT-5.1 Codex Max',
+          description: '',
+          isDefault: true,
+          supportedReasoningEfforts: ['medium'],
+          defaultReasoningEffort: 'medium',
+        }];
+      },
+    }),
+  });
+
+  const providerProfile = makeProfile();
+  const session = {
+    id: 'bridge-session-1',
+    providerProfileId: providerProfile.id,
+    codexThreadId: 'thread-openai-2',
+    cwd: '/tmp/openai',
+    title: null,
+    createdAt: Date.now(),
+    updatedAt: Date.now(),
+  };
+
+  await plugin.startThread({
+    providerProfile,
+    cwd: '/tmp/openai',
+  });
+  await plugin.startTurn({
+    providerProfile,
+    bridgeSession: session,
+    sessionSettings: null,
+    event: {
+      platform: 'weixin',
+      externalScopeId: 'wx-user-1',
+      text: 'hello',
+    },
+    inputText: 'hello',
+  });
+
+  assert.deepEqual(calls, [
+    ['start'],
+    ['startThread', null],
+    ['start'],
+    ['startTurn', null],
+  ]);
+});

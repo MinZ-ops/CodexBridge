@@ -11378,6 +11378,20 @@ export class BridgeCoordinator {
       result,
       context: turnArtifactContext,
     });
+    if (shouldRecoverFromProviderTurnResult(finalizedResult)) {
+      const errorMessage = finalizedResult.errorMessage || 'Codex turn failed with a recoverable provider error';
+      debugCoordinator('turn_result_recoverable_provider_error', {
+        platform: scopeRef.platform,
+        scopeId: scopeRef.externalScopeId,
+        bridgeSessionId: session.id,
+        threadId: finalizedResult?.threadId ?? session.codexThreadId,
+        turnId: finalizedResult?.turnId ?? null,
+        outputState: finalizedResult?.outputState ?? null,
+        finalSource: finalizedResult?.finalSource ?? null,
+        errorMessage,
+      });
+      throw new Error(errorMessage);
+    }
     debugCoordinator('turn_result_finalized', {
       platform: scopeRef.platform,
       scopeId: scopeRef.externalScopeId,
@@ -20408,6 +20422,17 @@ function isResumeRetryableError(error) {
 
 function shouldAutoRebindAfterRecoveryFailure(error) {
   return isStaleThreadError(error) || isResumeRetryableError(error);
+}
+
+function shouldRecoverFromProviderTurnResult(result) {
+  if (!result || result.outputState !== 'provider_error') {
+    return false;
+  }
+  const errorMessage = typeof result.errorMessage === 'string' ? result.errorMessage : '';
+  if (!errorMessage.trim()) {
+    return false;
+  }
+  return shouldAutoRebindAfterRecoveryFailure(new Error(errorMessage));
 }
 
 function isApprovedExecutionStallError(error) {
