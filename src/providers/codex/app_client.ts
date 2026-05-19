@@ -1132,10 +1132,10 @@ export class CodexAppClient extends EventEmitter {
   }
 
   resolveAppServerTransportKind(): 'websocket' | 'stdio' {
-    if (this.appServerTransport === 'stdio') {
-      return 'stdio';
+    if (this.appServerTransport === 'websocket') {
+      return 'websocket';
     }
-    return 'websocket';
+    return 'stdio';
   }
 
   handleStdioData(chunk: unknown): void {

@@ -622,6 +622,7 @@ test('CodexAppClient startServer inherits the default Codex feature config when 
 
   const client = new CodexAppClient({
     codexCliBin: 'codex',
+    appServerTransport: 'websocket',
     spawnImpl: ((command, args, options) => {
       calls.push({ command, args, options });
       return child as any;
@@ -654,6 +655,7 @@ test('CodexAppClient startServer prepends configured Codex CLI args', async () =
   const client = new CodexAppClient({
     codexCliBin: 'codex',
     codexCliArgs: ['-c', 'model_provider="deepseek"'],
+    appServerTransport: 'websocket',
     spawnImpl: ((command, args, options) => {
       calls.push({ command, args, options });
       return child as any;
@@ -682,6 +684,7 @@ test('CodexAppClient startServer wraps Windows cmd launchers through cmd.exe', a
   const client = new CodexAppClient({
     codexCliBin: 'C:\\Program Files\\Codex\\codex.cmd',
     platform: 'win32',
+    appServerTransport: 'websocket',
     spawnImpl: ((command, argsOrOptions, maybeOptions) => {
       calls.push({
         command,
@@ -706,6 +709,39 @@ test('CodexAppClient startServer wraps Windows cmd launchers through cmd.exe', a
   assert.match(String(calls[0]?.command), /^"C:\\Program Files\\Codex\\codex\.cmd" app-server --listen ws:\/\/127\.0\.0\.1:\d+$/);
 });
 
+test('CodexAppClient startServer defaults to stdio app-server transport', async () => {
+  const calls = [];
+  const child = new EventEmitter() as EventEmitter & {
+    stdout: EventEmitter;
+    stderr: EventEmitter;
+    stdin: { writable: boolean; write: (value: string) => void };
+    exitCode: number | null;
+  };
+  child.stdout = new EventEmitter();
+  child.stderr = new EventEmitter();
+  child.stdin = { writable: true, write: () => {} };
+  child.exitCode = 0;
+
+  const client = new CodexAppClient({
+    codexCliBin: 'codex',
+    spawnImpl: ((command, args, options) => {
+      calls.push({ command, args, options });
+      return child as any;
+    }) as any,
+  });
+
+  client.initialize = async () => {};
+
+  await client.startServer();
+
+  assert.equal(calls.length, 1);
+  assert.equal(calls[0]?.command, 'codex');
+  assert.deepEqual(calls[0]?.args, ['app-server']);
+  assert.deepEqual(calls[0]?.options?.stdio, ['pipe', 'pipe', 'pipe']);
+  assert.equal(client.transportKind, 'stdio');
+  assert.equal(client.connected, true);
+});
+
 test('CodexAppClient startServer surfaces a helpful Windows Codex ENOENT error', async () => {
   const child = new EventEmitter() as EventEmitter & {
     stderr: EventEmitter;
@@ -717,6 +753,7 @@ test('CodexAppClient startServer surfaces a helpful Windows Codex ENOENT error',
   const client = new CodexAppClient({
     codexCliBin: 'codex',
     platform: 'win32',
+    appServerTransport: 'websocket',
     spawnImpl: (() => {
       setImmediate(() => {
         const error = Object.assign(new Error('spawn codex ENOENT'), { code: 'ENOENT' });

@@ -1,5 +1,20 @@
 # CodexBridge
 
+> Downstream fork notice
+>
+> This repository is a downstream copy/fork of
+> [Gan-Xing/CodexBridge](https://github.com/Gan-Xing/CodexBridge).
+> Original authorship and upstream history belong to the upstream repository and
+> its contributors. This copy is maintained for personal deployment,
+> compatibility fixes, and operational notes, and is not presented as an
+> original project.
+>
+> Downstream maintainer contact: [MinZ-ops](https://github.com/MinZ-ops).
+>
+> License status: no explicit upstream license file was found in this copy at
+> the time of sync. See [NOTICE.md](./NOTICE.md) before publishing, distributing,
+> or using this copy commercially.
+
 CodexBridge is a Codex-centered gateway for connecting multiple chat platforms to one shared Codex engine, while switching backend provider profiles inside Codex when needed.
 
 ## Current Direction
